@@ -18,9 +18,13 @@ cd fennel-mcp
 make install
 ```
 
-`make setup-claude` builds the Docker image, installs the wrapper script to `/usr/local/bin`, and registers the server with Claude Code. It will prompt for your password to write to `/usr/local/bin`.
+Use `make install` to build and install the wrapper only.
 
-Use `make install` to build and install the wrapper only, without registering with Claude Code.
+To register with claude, from the project where you want it enabled:
+
+```sh
+claude mcp add fennel-mcp -- fennel-mcp
+```
 
 ## Tools
 
