@@ -12,27 +12,15 @@ Written in pure Fennel, runs on Lua 5.4, served over JSON-RPC stdio.
 
 ## Installation
 
-### 1. Build the image
-
 ```sh
 git clone https://github.com/mpenet/fennel-mcp
 cd fennel-mcp
-docker build -t fennel-mcp .
+make install
 ```
 
-### 2. Install the wrapper script
+`make setup-claude` builds the Docker image, installs the wrapper script to `/usr/local/bin`, and registers the server with Claude Code. It will prompt for your password to write to `/usr/local/bin`.
 
-```sh
-sudo cp bin/fennel-mcp /usr/local/bin/fennel-mcp
-```
-
-The wrapper mounts `$HOME` into the container at the same path, so all files under your home directory are accessible using their native host paths.
-
-### 3. Add to Claude Code
-
-```sh
-claude mcp add fennel-mcp -- fennel-mcp
-```
+Use `make install` to build and install the wrapper only, without registering with Claude Code.
 
 ## Tools
 
@@ -118,7 +106,7 @@ Append a new top-level form at the end of a file.
 ## Workflow tips
 
 - **Always run `fennel_view_ast` first.** It gives you the exact node text including whitespace and newlines, which you need to match `old_sexp` / `anchor` precisely.
-- Pass native host paths (e.g. `/Users/you/project/src/foo.fnl`). The container sees them at the same path via the `$HOME` mount.
+- Pass native host paths (e.g. `/Users/you/project/src/foo.fnl`). The wrapper mounts the Claude Code session's working directory into the container at the same path, so files under your project root are accessible directly.
 - The server validates that every target is a real AST node. It will refuse matches on partial text or misaligned boundaries.
 
 ## Architecture
