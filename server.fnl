@@ -14,14 +14,14 @@
 
 (fn mk-result [result]
   {:content [{:type :text :text result.message}]
-   :isError  (not result.success)})
+   :isError (not result.success)})
 
 (local tools
   [{:name :fennel_edit
     :description "Replace an S-expression in a Fennel file. Locates the form by exact text match via tree-sitter (validates it is a real AST node), then replaces its byte range. Refuses to match partial or structurally invalid nodes."
     :inputSchema {:type :object
                   :required [:file :old_sexp :new_sexp]
-                  :properties {:file     {:type :string :description "Path to the .fnl file"}
+                  :properties {:file {:type :string :description "Path to the .fnl file"}
                                :old_sexp {:type :string :description "Exact source text of the S-expression to replace"}
                                :new_sexp {:type :string :description "Replacement text"}}}}
    {:name :fennel_delete
@@ -34,9 +34,9 @@
     :description "Insert a new form before or after an existing anchor S-expression in a Fennel file."
     :inputSchema {:type :object
                   :required [:file :anchor :form :position]
-                  :properties {:file     {:type :string :description "Path to the .fnl file"}
-                               :anchor   {:type :string :description "Exact source text of the anchor S-expression"}
-                               :form     {:type :string :description "New form to insert"}
+                  :properties {:file {:type :string :description "Path to the .fnl file"}
+                               :anchor {:type :string :description "Exact source text of the anchor S-expression"}
+                               :form {:type :string :description "New form to insert"}
                                :position {:type :string :enum [:before :after] :description "Insert before or after the anchor"}}}}
    {:name :fennel_append
     :description "Append a new top-level form at the end of a Fennel file."
@@ -52,14 +52,14 @@
                                :sexp {:type :string :description "Optional: exact source text of a form to scope the view to"}}}}])
 
 (local dispatch
-  {:fennel_edit     #(tool.edit $)
-   :fennel_delete   #(tool.delete $)
-   :fennel_insert   #(tool.insert $)
-   :fennel_append   #(tool.append $)
+  {:fennel_edit #(tool.edit $)
+   :fennel_delete #(tool.delete $)
+   :fennel_insert #(tool.insert $)
+   :fennel_append #(tool.append $)
    :fennel_view_ast #(tool.view-ast $)})
 
 (fn handle-tool-call [id params]
-  (let [name    params.name
+  (let [name params.name
         handler (. dispatch name)]
     (if handler
       (let [(ok result) (pcall handler params.arguments)]
@@ -71,12 +71,12 @@
 
 (fn handle [req]
   (let [method req.method
-        id     req.id]
+        id req.id]
     (match method
       :initialize
       (respond id {:protocolVersion :2024-11-05
-                   :capabilities    {:tools {:listChanged false}}
-                   :serverInfo      {:name :fennel-mcp :version :0.1.0}})
+                   :capabilities {:tools {:listChanged false}}
+                   :serverInfo {:name :fennel-mcp :version :0.1.0}})
 
       :tools/list
       (respond id {:tools tools})

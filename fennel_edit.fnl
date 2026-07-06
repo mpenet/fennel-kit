@@ -40,35 +40,35 @@
 
 (fn edit [{:file file :old_sexp old :new_sexp new}]
   (let [source (read-file file)
-        root   (parse source)
-        node   (find-node root old)]
+        root (parse source)
+        node (find-node root old)]
     (if (not node)
       {:success false :message (.. "No matching sexp found in " file)}
-      (let [start  (node:start_byte_offset)
+      (let [start (node:start_byte_offset)
             finish (node:end_byte_offset)]
         (write-file file (.. (source:sub 1 start) new (source:sub (+ finish 1))))
         {:success true :message (.. "Replaced sexp in " file)}))))
 
 (fn delete [{:file file :sexp sexp}]
   (let [source (read-file file)
-        root   (parse source)
-        node   (find-node root sexp)]
+        root (parse source)
+        node (find-node root sexp)]
     (if (not node)
       {:success false :message (.. "No matching sexp found in " file)}
-      (let [start  (node:start_byte_offset)
+      (let [start (node:start_byte_offset)
             finish (node:end_byte_offset)
-            raw    (.. (source:sub 1 start) (source:sub (+ finish 1)))]
+            raw (.. (source:sub 1 start) (source:sub (+ finish 1)))]
         ;; collapse runs of 3+ newlines left by the removal
         (write-file file (raw:gsub "\n\n\n+" "\n\n"))
         {:success true :message (.. "Deleted sexp from " file)}))))
 
 (fn insert [{:file file :anchor anchor :form form :position position}]
   (let [source (read-file file)
-        root   (parse source)
-        node   (find-node root anchor)]
+        root (parse source)
+        node (find-node root anchor)]
     (if (not node)
       {:success false :message (.. "No matching anchor sexp found in " file)}
-      (let [start  (node:start_byte_offset)
+      (let [start (node:start_byte_offset)
             finish (node:end_byte_offset)
             new-source (if (= position :before)
                          (.. (source:sub 1 start) form "\n\n" (source:sub (+ start 1)))
@@ -77,17 +77,17 @@
         {:success true :message (.. "Inserted form " position " anchor in " file)}))))
 
 (fn append [{:file file :form form}]
-  (let [source  (read-file file)
+  (let [source (read-file file)
         trimmed (source:gsub "%s+$" "")]
     (write-file file (.. trimmed "\n\n" form "\n"))
     {:success true :message (.. "Appended form to " file)}))
 
 (fn fmt-node [node depth]
-  (let [indent  (string.rep "  " depth)
-        src     (node:source)
-        short   (if (> (# src) 60) (.. (src:sub 1 60) "…") src)
+  (let [indent (string.rep "  " depth)
+        src (node:source)
+        short (if (> (# src) 60) (.. (src:sub 1 60) "…") src)
         preview (short:gsub "\n" "↵")
-        line    (.. indent (node:type) "  " preview "\n")]
+        line (.. indent (node:type) "  " preview "\n")]
     (var out line)
     (var i 0)
     (let [count (node:named_child_count)]
@@ -98,7 +98,7 @@
 
 (fn view-ast [{:file file :sexp sexp}]
   (let [source (read-file file)
-        root   (parse source)
+        root (parse source)
         target (if (and sexp (not= sexp ""))
                  (find-node root sexp)
                  root)]
@@ -106,8 +106,8 @@
       {:success false :message (.. "No matching sexp found in " file)}
       {:success true :message (fmt-node target 0)})))
 
-{:edit     edit
- :delete   delete
- :insert   insert
- :append   append
+{:edit edit
+ :delete delete
+ :insert insert
+ :append append
  :view-ast view-ast}
