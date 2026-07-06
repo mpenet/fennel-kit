@@ -1,4 +1,2 @@
 #!/bin/sh
-# exec docker run -i --rm -v "/Users:/Users" fennel-mcp
-# exec docker run -i --rm -v "$(pwd):/data" fennel-mcp
 exec docker run -i --rm -v "$(pwd):$(pwd)" fennel-mcp
