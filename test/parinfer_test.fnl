@@ -60,6 +60,40 @@
   "(fn foo [x)\n  x\n"
   "(fn foo [x]\n  x\n)")
 
+(check "nested-three-deep" "(a (b (c" "(a (b (c)))")
+
+(check "mixed-bracket-nested" "(let [x {:a 1" "(let [x {:a 1}])")
+
+(check "blank-line-no-close"
+  "(fn foo []\n\n  x\n"
+  "(fn foo []\n\n  x\n)")
+
+(check "comment-line-no-close"
+  "(fn foo []\n  ;; body\n  x\n"
+  "(fn foo []\n  ;; body\n  x\n)")
+
+(check "whitespace-line-no-close"
+  "(fn foo []\n   \n  x\n"
+  "(fn foo []\n   \n  x\n)")
+
+(check "two-levels-at-once"
+  "(a\n  (b\n    c\n(d"
+  "(a\n  (b\n    c))\n(d)")
+
+(check "table-missing-close" "{:a 1 :b 2" "{:a 1 :b 2}")
+
+(check "empty-parens" "()" "()")
+
+(check "empty-brackets" "[]" "[]")
+
+(check "empty-braces" "{}" "{}")
+
+(check "string-close-paren" "(foo \"bar)\" baz" "(foo \"bar)\" baz)")
+
+(check "interleaved-brackets" "([x)" "([x])")
+
+(check "multi-wrong-close" "(foo})" "(foo)")
+
 ;; -- summary --
 (print (.. "\n" passed " passed, " failed " failed"))
 (when (> failed 0)
