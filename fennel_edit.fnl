@@ -23,41 +23,67 @@
         tree (parser:parse_string source)]
     (tree:root)))
 
-(fn find-node [node text]
-  "Pre-order DFS: returns first node whose source() equals text."
-  (if (= (node:source) text)
-    node
-    (do
-      (var result nil)
-      (var i 0)
-      (let [count (node:child_count)]
-        (while (and (< i count) (= result nil))
-          (set result (find-node (node:child i) text))
-          (set i (+ i 1))))
-      result)))
+(fn normalize [s]
+  (let [s2 (: (or s "") :gsub "%s+" " ")]
+    (or (s2:match "^%s*(.-)%s*$") "")))
+
+(fn find-all-nodes [node norm-text acc]
+  "Pre-order DFS: collects matching nodes into acc, stops once 2 found."
+  (when (= (normalize (node:source)) norm-text)
+    (table.insert acc node))
+  (when (< (# acc) 2)
+    (var i 0)
+    (let [count (node:child_count)]
+      (while (and (< i count) (< (# acc) 2))
+        (find-all-nodes (node:child i) norm-text acc)
+        (set i (+ i 1)))))
+  acc)
 
 ;; --- operations ---
+
+(fn text->pattern [s]
+  (let [escaped (s:gsub "([%(%)%.%%%+%-%*%?%[%]%^%$])" "%%%1")]
+    (escaped:gsub "%s+" "%%s+")))
+
+(fn find-range [source root text]
+  "Tries AST match, exact substring, then pattern. Returns start, finish, node-or-nil, err-or-nil."
+  (let [matches (find-all-nodes root (normalize text) [])
+        n (# matches)
+        pat (text->pattern text)]
+    (if (> n 1)
+      (values nil nil nil "ambiguous: text matches multiple nodes")
+      (let [node (. matches 1)]
+        (if node
+          (values (node:start_byte_offset) (node:end_byte_offset) node nil)
+          (let [(s e) (source:find text 1 true)]
+            (if s
+              (if (source:find text (+ e 1) true)
+                (values nil nil nil "ambiguous: text matches multiple locations")
+                (values (- s 1) e nil nil))
+              (let [(s e) (source:find pat)]
+                (if s
+                  (if (source:find pat (+ e 1))
+                    (values nil nil nil "ambiguous: text matches multiple locations")
+                    (values (- s 1) e nil nil))
+                  (values nil nil nil nil))))))))))
 
 (fn edit [{:file file :old_sexp old :new_sexp new}]
   (let [source (read-file file)
         root (parse source)
-        node (find-node root old)]
-    (if (not node)
-      {:success false :message (.. "No matching sexp found in " file)}
-      (let [start (node:start_byte_offset)
-            finish (node:end_byte_offset)]
+        (start finish _ err) (find-range source root old)]
+    (if (or err (not start))
+      {:success false :message (or err (.. "No matching sexp found in " file))}
+      (do
         (write-file file (.. (source:sub 1 start) new (source:sub (+ finish 1))))
         {:success true :message (.. "Replaced sexp in " file)}))))
 
 (fn delete [{:file file :sexp sexp}]
   (let [source (read-file file)
         root (parse source)
-        node (find-node root sexp)]
-    (if (not node)
-      {:success false :message (.. "No matching sexp found in " file)}
-      (let [start (node:start_byte_offset)
-            finish (node:end_byte_offset)
-            raw (.. (source:sub 1 start) (source:sub (+ finish 1)))]
+        (start finish _ err) (find-range source root sexp)]
+    (if (or err (not start))
+      {:success false :message (or err (.. "No matching sexp found in " file))}
+      (let [raw (.. (source:sub 1 start) (source:sub (+ finish 1)))]
         ;; collapse runs of 3+ newlines left by the removal
         (write-file file (raw:gsub "\n\n\n+" "\n\n"))
         {:success true :message (.. "Deleted sexp from " file)}))))
@@ -65,12 +91,10 @@
 (fn insert [{:file file :anchor anchor :form form :position position}]
   (let [source (read-file file)
         root (parse source)
-        node (find-node root anchor)]
-    (if (not node)
-      {:success false :message (.. "No matching anchor sexp found in " file)}
-      (let [start (node:start_byte_offset)
-            finish (node:end_byte_offset)
-            new-source (if (= position :before)
+        (start finish _ err) (find-range source root anchor)]
+    (if (or err (not start))
+      {:success false :message (or err (.. "No matching anchor sexp found in " file))}
+      (let [new-source (if (= position :before)
                          (.. (source:sub 1 start) form "\n\n" (source:sub (+ start 1)))
                          (.. (source:sub 1 finish) "\n\n" form (source:sub (+ finish 1))))]
         (write-file file new-source)
@@ -99,12 +123,13 @@
 (fn view-ast [{:file file :sexp sexp}]
   (let [source (read-file file)
         root (parse source)
-        target (if (and sexp (not= sexp ""))
-                 (find-node root sexp)
-                 root)]
-    (if (and sexp (not= sexp "") (not target))
-      {:success false :message (.. "No matching sexp found in " file)}
-      {:success true :message (fmt-node target 0)})))
+        (start finish node err) (if (and sexp (not= sexp ""))
+                                  (find-range source root sexp)
+                                  (values nil nil root nil))]
+    (if (or err (and sexp (not= sexp "") (not start)))
+      {:success false :message (or err (.. "No matching sexp found in " file))}
+      (let [target (or node (parse (source:sub (+ start 1) finish)))]
+        {:success true :message (fmt-node target 0)}))))
 
 {:edit edit
  :delete delete
