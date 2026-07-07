@@ -12,9 +12,11 @@ Inspired by [clojure-mcp-light](https://github.com/bhauman/clojure-mcp-light).
 
 ## Requirements
 
+- `fennel` — required for all tools (all scripts are written in Fennel)
 - [parinfer-rust](https://github.com/eraserhd/parinfer-rust) — preferred delimiter repair engine (optional)
-- `fennel` — required for `fennel-eval` / `fennel-eval-server`; also used as fallback repair engine when parinfer-rust is absent
 - `fnlfmt` (optional) — formatter, enabled via `FENNEL_KIT_FNLFMT=1`
+
+No bash or jq dependency. All scripts are `#!/usr/bin/env fennel`.
 
 When parinfer-rust is not installed, repair falls back to a pure-Fennel indent-mode implementation bundled in `lib/parinfer.fnl`. It inserts missing closers and removes misplaced ones. The only known limitation: multi-line string literals (rare in Fennel) may confuse the tokenizer.
 
