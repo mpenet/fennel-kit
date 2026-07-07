@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# fennel-eval — evaluate Fennel code in a persistent server.
+#
+# Usage:
+#   fennel-eval CODE                  eval code, print result
+#   fennel-eval --discover            show running server info
+#   fennel-eval --stop                stop running server
+#
+# Start a server first with: fennel-eval-server
+#
+# Code is automatically repaired with parinfer-rust if available.
+#
+# Optional env:
+#   FENNEL_REPL_INFO      — path to discovery file (default: .fennel-repl)
+#   PARINFER_RUST_PATH    — path to parinfer-rust binary
+
+set -euo pipefail
+
+INFO="${FENNEL_REPL_INFO:-.fennel-repl}"
+PARINFER="${PARINFER_RUST_PATH:-parinfer-rust}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ -f /usr/local/lib/fennel-mcp/parinfer.fnl ]]; then
+  PARINFER_FNL=/usr/local/lib/fennel-mcp/parinfer.fnl
+elif [[ -f "$SCRIPT_DIR/../lib/parinfer.fnl" ]]; then
+  PARINFER_FNL="$SCRIPT_DIR/../lib/parinfer.fnl"
+else
+  PARINFER_FNL=""
+fi
+
+usage() {
+  echo "Usage: fennel-eval CODE"
+  echo "       fennel-eval --discover"
+  echo "       fennel-eval --stop"
+  exit "${1:-0}"
+}
+
+[[ $# -eq 0 ]] && usage 1
+
+case "$1" in
+  --discover)
+    if [[ -f "$INFO" ]]; then cat "$INFO"; else echo "No server running ($INFO not found)"; fi
+    exit 0
+    ;;
+  --stop)
+    exec fennel-eval-server --stop
+    ;;
+  -h|--help) usage ;;
+esac
+
+CODE="$*"
+
+# Repair delimiters before eval
+if command -v "$PARINFER" &>/dev/null; then
+  REPAIRED=$(printf '%s' "$CODE" | "$PARINFER" --mode indent --language fennel 2>/dev/null)
+  [[ -n "$REPAIRED" ]] && CODE="$REPAIRED"
+elif [[ -n "$PARINFER_FNL" ]] && command -v fennel &>/dev/null; then
+  REPAIRED=$(printf '%s' "$CODE" | fennel "$PARINFER_FNL" 2>/dev/null)
+  [[ -n "$REPAIRED" ]] && CODE="$REPAIRED"
+fi
+
+if [[ ! -f "$INFO" ]]; then
+  echo "No Fennel server running. Start one with: fennel-eval-server" >&2
+  exit 1
+fi
+
+# shellcheck disable=SC1090
+source "$INFO"
+
+if ! kill -0 "${pid:-0}" 2>/dev/null; then
+  echo "Server (PID ${pid:-?}) is not running. Start with: fennel-eval-server" >&2
+  exit 1
+fi
+
+IN_PIPE="$dir/in"
+OUT_PIPE="$dir/out"
+
+LEN="${#CODE}"
+printf "%d\n%s" "$LEN" "$CODE" >> "$IN_PIPE"
+
+{
+  IFS= read -r status
+  IFS= read -r result
+} < "$OUT_PIPE"
+
+if [[ "$status" == "ok" ]]; then
+  echo "$result"
+else
+  echo "Error: $result" >&2
+  exit 1
+fi

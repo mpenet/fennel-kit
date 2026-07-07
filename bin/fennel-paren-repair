@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# fennel-paren-repair — Fix delimiter errors in Fennel files.
+#
+# Usage:
+#   fennel-paren-repair [FILE ...]          # fix files in place
+#   echo "(foo bar" | fennel-paren-repair   # fix stdin, output to stdout
+#
+# Optional env:
+#   PARINFER_RUST_PATH  — path to parinfer-rust binary (default: parinfer-rust from PATH)
+#   FENNEL_MCP_FNLFMT   — set to 1 to run fnlfmt --fix after repair
+
+set -euo pipefail
+
+PARINFER="${PARINFER_RUST_PATH:-parinfer-rust}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Locate the bundled Fennel fallback
+if [[ -f /usr/local/lib/fennel-mcp/parinfer.fnl ]]; then
+  PARINFER_FNL=/usr/local/lib/fennel-mcp/parinfer.fnl
+elif [[ -f "$SCRIPT_DIR/../lib/parinfer.fnl" ]]; then
+  PARINFER_FNL="$SCRIPT_DIR/../lib/parinfer.fnl"
+else
+  PARINFER_FNL=""
+fi
+
+has_parinfer()  { command -v "$PARINFER" &>/dev/null; }
+has_fallback()  { [[ -n "$PARINFER_FNL" ]] && command -v fennel &>/dev/null; }
+
+do_repair() {
+  # stdin → stdout. Prefers parinfer-rust, falls back to Fennel impl.
+  if has_parinfer; then
+    "$PARINFER" --mode indent --language fennel 2>/dev/null
+  elif has_fallback; then
+    fennel "$PARINFER_FNL"
+  else
+    cat  # passthrough
+  fi
+}
+
+repair_stdin() {
+  local tmp out
+  tmp=$(mktemp)
+  out=$(mktemp)
+  trap 'rm -f "$tmp" "$out"' RETURN
+  cat > "$tmp"
+  do_repair < "$tmp" > "$out"
+  [[ -s "$out" ]] || cp "$tmp" "$out"
+  cat "$out"
+}
+
+repair_file() {
+  local path="$1" tmp
+  tmp=$(mktemp)
+  trap 'rm -f "$tmp"' RETURN
+  do_repair < "$path" > "$tmp"
+  [[ -s "$tmp" ]] || cp "$path" "$tmp"
+  if cmp -s "$path" "$tmp"; then
+    echo "  $path: unchanged"
+  else
+    cp "$tmp" "$path"
+    echo "  $path: fixed"
+  fi
+  if [[ "${FENNEL_MCP_FNLFMT:-0}" == 1 ]] && command -v fnlfmt &>/dev/null; then
+    fnlfmt --fix "$path" 2>/dev/null || true
+  fi
+}
+
+if ! has_parinfer && ! has_fallback; then
+  echo "Error: parinfer-rust not found and Fennel fallback unavailable." >&2
+  echo "Install parinfer-rust or run: make install-eval" >&2
+  exit 1
+fi
+
+if [[ $# -eq 0 ]]; then
+  repair_stdin
+else
+  echo
+  echo "fennel-paren-repair Results"
+  echo "==========================="
+  echo
+  failed=0
+  for f in "$@"; do
+    if [[ ! -f "$f" ]]; then
+      echo "  $f: not found"
+      failed=1
+    elif [[ "$f" != *.fnl ]]; then
+      echo "  $f: skipped (not a .fnl file)"
+    else
+      repair_file "$f"
+    fi
+  done
+  echo
+  exit $failed
+fi

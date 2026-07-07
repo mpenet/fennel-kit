@@ -1,16 +1,29 @@
-IMAGE   = fennel-mcp
-WRAPPER = /usr/local/bin/fennel-mcp
+REPAIR      = /usr/local/bin/fennel-paren-repair
+REPAIR_HOOK = /usr/local/bin/fennel-paren-repair-hook
+EVAL        = /usr/local/bin/fennel-eval
+EVAL_SERVER = /usr/local/bin/fennel-eval-server
+LIB_DIR     = /usr/local/lib/fennel-mcp
 
-.PHONY: all build install setup
+.PHONY: all install install-hook install-repair install-eval
 
 all: install
 
-build:
-	docker build -t $(IMAGE) .
+install: install-repair install-hook install-eval
 
-install: build
-	sudo cp bin/fennel-mcp $(WRAPPER)
-	sudo chmod +x $(WRAPPER)
+install-lib:
+	sudo mkdir -p $(LIB_DIR)
+	sudo cp lib/parinfer.fnl $(LIB_DIR)/parinfer.fnl
 
-setup-claude: install
-	claude mcp add fennel-mcp -- fennel-mcp
+install-repair: install-lib
+	sudo cp bin/fennel-paren-repair $(REPAIR)
+	sudo chmod +x $(REPAIR)
+
+install-hook: install-lib
+	sudo cp bin/fennel-paren-repair-hook $(REPAIR_HOOK)
+	sudo chmod +x $(REPAIR_HOOK)
+
+install-eval: install-lib
+	sudo cp fennel-repl-server.fnl $(LIB_DIR)/fennel-repl-server.fnl
+	sudo cp bin/fennel-eval $(EVAL)
+	sudo cp bin/fennel-eval-server $(EVAL_SERVER)
+	sudo chmod +x $(EVAL) $(EVAL_SERVER)

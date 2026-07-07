@@ -1,127 +1,170 @@
 # fennel-mcp
 
-A structural editing MCP server for [Fennel](https://fennel-lang.org), built on [tree-sitter-fennel](https://github.com/alexmozaidze/tree-sitter-fennel) via [ltreesitter](https://github.com/euclidianAce/ltreesitter).
+CLI tools for LLM coding assistants working with [Fennel](https://fennel-lang.org).
 
-Instead of blind text replacement, tools locate S-expressions as real AST nodes and operate on their exact byte ranges. Broken parentheses, partial matches, and whitespace corruption are not possible — if the form isn't a valid node in the tree, the operation is refused.
+Solves the **"Paren Edit Death Loop"** — where an LLM repeatedly fails to fix mismatched delimiters in Fennel code. Three tools:
 
-Written in pure Fennel, runs on Lua 5.4, served over JSON-RPC stdio.
+- [`fennel-paren-repair-hook`](#fennel-paren-repair-hook) — Auto-fix delimiters via Claude Code hooks
+- [`fennel-paren-repair`](#fennel-paren-repair) — On-demand delimiter fix (any LLM with shell access)
+- [`fennel-eval`](#fennel-eval) — Evaluate Fennel code in a persistent REPL process
+
+Inspired by [clojure-mcp-light](https://github.com/bhauman/clojure-mcp-light).
 
 ## Requirements
 
-- Docker
+- [parinfer-rust](https://github.com/eraserhd/parinfer-rust) — preferred delimiter repair engine (optional)
+- `fennel` — required for `fennel-eval` / `fennel-eval-server`; also used as fallback repair engine when parinfer-rust is absent
+- `fnlfmt` (optional) — formatter, enabled via `FENNEL_MCP_FNLFMT=1`
+
+When parinfer-rust is not installed, repair falls back to a pure-Fennel indent-mode implementation bundled in `lib/parinfer.fnl`. The fallback handles the most common LLM mistake (missing closing delimiters) but does not remove extraneous closers mid-code.
 
 ## Installation
 
 ```sh
 git clone https://github.com/mpenet/fennel-mcp
 cd fennel-mcp
-make install
+make install         # all tools → /usr/local/bin, lib → /usr/local/lib/fennel-mcp
+make install-hook    # hook only
+make install-repair  # repair CLI only
+make install-eval    # eval tools only
 ```
 
-Use `make install` to build and install the wrapper only.
+---
 
-To register with claude, from the project where you want it enabled:
+## `fennel-paren-repair-hook`
+
+Claude Code hook that automatically repairs Fennel delimiter errors on every Write/Edit operation.
+
+### How it works
+
+- **PreToolUse/Write**: intercepts the file content before it's written, repairs delimiters, passes corrected content back to Claude
+- **PostToolUse/Edit**: repairs the file on disk after an Edit
+
+### Configuration
+
+Add to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse":  [{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "fennel-paren-repair-hook"}]}],
+    "PostToolUse": [{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "fennel-paren-repair-hook"}]}]
+  }
+}
+```
+
+### Environment
+
+| Variable             | Default         | Description                                    |
+|----------------------|-----------------|------------------------------------------------|
+| `PARINFER_RUST_PATH` | `parinfer-rust` | Path to parinfer-rust binary                   |
+| `FENNEL_MCP_FNLFMT`  | `0`             | Set to `1` to run `fnlfmt --fix` after repair  |
+
+---
+
+## `fennel-paren-repair`
+
+Standalone CLI for on-demand repair. Useful with Gemini CLI, Codex, or any LLM with shell access.
+
+### Usage
 
 ```sh
-claude mcp add fennel-mcp -- fennel-mcp
+# Fix files in place
+fennel-paren-repair foo.fnl bar.fnl
+
+# Fix stdin, output to stdout
+echo "(fn add [x y] (+ x y)" | fennel-paren-repair
+
+# Heredoc
+fennel-paren-repair <<'EOF'
+(fn broken [x
+  (+ x 1))
+EOF
 ```
 
-## Tools
+### Environment
 
-### `fennel_view_ast`
+| Variable             | Default         | Description                                    |
+|----------------------|-----------------|------------------------------------------------|
+| `PARINFER_RUST_PATH` | `parinfer-rust` | Path to parinfer-rust binary                   |
+| `FENNEL_MCP_FNLFMT`  | `0`             | Set to `1` to run `fnlfmt --fix` after repair  |
 
-Show the tree-sitter AST of a Fennel file as indented text. Use this before editing to understand structure and verify form text exactly.
+---
 
-| Parameter | Type   | Required | Description                                      |
-|-----------|--------|----------|--------------------------------------------------|
-| `file`    | string | yes      | Path to the `.fnl` file                          |
-| `sexp`    | string | no       | Exact source text of a form to scope the view to |
+## `fennel-eval`
 
-**Example output:**
+Persistent-state Fennel REPL for LLM use. Code is repaired before eval (parinfer-rust preferred, Fennel fallback otherwise).
+
+### Usage
+
+```sh
+# Start server in current project directory
+fennel-eval-server
+
+# Evaluate code
+fennel-eval "(+ 1 2)"
+# => 3
+
+# Global bindings persist across calls
+fennel-eval "(global x 42)"
+fennel-eval "x"
+# => 42
+
+# Require modules (resolved via project's package.path)
+fennel-eval "(local m (require :mymodule)) (m.my-fn 1 2)"
+
+# Show running server info
+fennel-eval --discover
+
+# Stop server
+fennel-eval-server --stop
+# or: fennel-eval --stop
 ```
-program  (fn add [x y]↵  (+ x y))↵↵(fn main []↵  (print …
-  fn_form  (fn add [x y]↵  (+ x y))
-    symbol  fn
-    symbol  add
-    sequence_arguments  [x y]
-      symbol_binding  x
-      symbol_binding  y
-    list  (+ x y)
-      symbol  +
-      symbol  x
-      symbol  y
-  fn_form  (fn main []↵  (print (add 1 2)))
-    ...
+
+### Notes
+
+- `local` bindings don't persist across eval calls (Lua chunk scoping). Use `global` for state that must persist between calls.
+- One server per project directory, discovered via `.fennel-repl` in the current directory.
+- Serial access only — one eval at a time, which matches LLM usage patterns.
+
+### Environment
+
+| Variable             | Default         | Description                          |
+|----------------------|-----------------|--------------------------------------|
+| `FENNEL_REPL_INFO`   | `.fennel-repl`  | Path to server discovery file        |
+| `FENNEL_CMD`         | `fennel`        | Fennel binary to use                 |
+| `PARINFER_RUST_PATH` | `parinfer-rust` | Path to parinfer-rust binary         |
+
+### Telling the LLM about `fennel-eval`
+
+Add to `~/.claude/CLAUDE.md` or the project's `CLAUDE.md`:
+
+```markdown
+## Fennel REPL
+
+The command `fennel-eval` is available for evaluating Fennel code.
+
+Start the server first: `fennel-eval-server`
+
+Evaluate code: `fennel-eval "(+ 1 2)"`
+
+Use `global` for bindings that should persist across eval calls:
+`fennel-eval "(global x 42)"`
+
+The REPL session persists — state is maintained between evaluations.
 ```
 
 ---
 
-### `fennel_edit`
+## Docker
 
-Replace an S-expression with new content.
+The Docker image bundles parinfer-rust and all scripts. Useful for extracting the parinfer-rust binary without a local Rust toolchain:
 
-| Parameter  | Type   | Required | Description                              |
-|------------|--------|----------|------------------------------------------|
-| `file`     | string | yes      | Path to the `.fnl` file                  |
-| `old_sexp` | string | yes      | Exact source text of the form to replace |
-| `new_sexp` | string | yes      | Replacement text                         |
-
-**Example:** rename `add` to `sum` and update its body:
+```sh
+docker build -t fennel-mcp .
+docker run --rm fennel-mcp cat /usr/local/bin/parinfer-rust > /usr/local/bin/parinfer-rust
+chmod +x /usr/local/bin/parinfer-rust
 ```
-old_sexp: "(fn add [x y]\n  (+ x y))"
-new_sexp: "(fn sum [x y]\n  (+ x y))"
-```
-
----
-
-### `fennel_delete`
-
-Delete an S-expression from a file. Collapses any blank lines left behind.
-
-| Parameter | Type   | Required | Description                             |
-|-----------|--------|----------|-----------------------------------------|
-| `file`    | string | yes      | Path to the `.fnl` file                 |
-| `sexp`    | string | yes      | Exact source text of the form to delete |
-
----
-
-### `fennel_insert`
-
-Insert a new form before or after an existing anchor form.
-
-| Parameter  | Type   | Required | Description                         |
-|------------|--------|----------|-------------------------------------|
-| `file`     | string | yes      | Path to the `.fnl` file             |
-| `anchor`   | string | yes      | Exact source text of the anchor form |
-| `form`     | string | yes      | New form to insert                  |
-| `position` | string | yes      | `"before"` or `"after"` the anchor  |
-
----
-
-### `fennel_append`
-
-Append a new top-level form at the end of a file.
-
-| Parameter | Type   | Required | Description             |
-|-----------|--------|----------|-------------------------|
-| `file`    | string | yes      | Path to the `.fnl` file |
-| `form`    | string | yes      | Form to append          |
-
-## Workflow tips
-
-- **Always run `fennel_view_ast` first.** It gives you the exact node text including whitespace and newlines, which you need to match `old_sexp` / `anchor` precisely.
-- Pass native host paths (e.g. `/Users/you/project/src/foo.fnl`). The wrapper mounts the Claude Code session's working directory into the container at the same path, so files under your project root are accessible directly.
-- The server validates that every target is a real AST node. It will refuse matches on partial text or misaligned boundaries.
-
-## Architecture
-
-```
-server.fnl        — JSON-RPC 2.0 over stdio, MCP protocol, tool dispatch
-fennel_edit.fnl   — all editing operations (parse, find, mutate)
-Dockerfile        — Alpine 3.21, Lua 5.4, ltreesitter, tree-sitter-fennel grammar
-```
-
-The grammar `.so` is compiled from source during the Docker build. ltreesitter bundles the tree-sitter runtime, so no system-level tree-sitter installation is needed at runtime.
 
 ## License
 

@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# fennel-paren-repair-hook — Claude Code hook for Fennel delimiter repair.
+# Intercepts Write/Edit on .fnl files and repairs parens via parinfer-rust.
+#
+# Add to ~/.claude/settings.json:
+#   "hooks": {
+#     "PreToolUse":  [{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "fennel-paren-repair-hook"}]}],
+#     "PostToolUse": [{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "fennel-paren-repair-hook"}]}]
+#   }
+#
+# Optional env:
+#   PARINFER_RUST_PATH  — path to parinfer-rust binary (default: parinfer-rust from PATH)
+#   FENNEL_MCP_FNLFMT  — set to 1 to run fnlfmt --fix after repair
+
+set -euo pipefail
+
+PARINFER="${PARINFER_RUST_PATH:-parinfer-rust}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ -f /usr/local/lib/fennel-mcp/parinfer.fnl ]]; then
+  PARINFER_FNL=/usr/local/lib/fennel-mcp/parinfer.fnl
+elif [[ -f "$SCRIPT_DIR/../lib/parinfer.fnl" ]]; then
+  PARINFER_FNL="$SCRIPT_DIR/../lib/parinfer.fnl"
+else
+  PARINFER_FNL=""
+fi
+
+is_fennel()    { [[ "${1:-}" == *.fnl ]]; }
+has_parinfer() { command -v "$PARINFER" &>/dev/null; }
+has_fallback() { [[ -n "$PARINFER_FNL" ]] && command -v fennel &>/dev/null; }
+
+do_repair() {
+  if has_parinfer; then
+    "$PARINFER" --mode indent --language fennel 2>/dev/null
+  elif has_fallback; then
+    fennel "$PARINFER_FNL"
+  else
+    cat
+  fi
+}
+
+repair_content_to_file() {
+  local src="$1" dst="$2"
+  do_repair < "$src" > "$dst"
+  [[ -s "$dst" ]] || cp "$src" "$dst"
+}
+
+repair_file() {
+  local path="$1" tmp
+  tmp=$(mktemp)
+  trap 'rm -f "$tmp"' RETURN
+  repair_content_to_file "$path" "$tmp"
+  cmp -s "$path" "$tmp" || cp "$tmp" "$path"
+  if [[ "${FENNEL_MCP_FNLFMT:-0}" == 1 ]] && command -v fnlfmt &>/dev/null; then
+    fnlfmt --fix "$path" 2>/dev/null || true
+  fi
+}
+
+INPUT=$(cat)
+EVENT=$(printf '%s' "$INPUT" | jq -r '.hook_event_name // ""')
+TOOL=$(printf '%s'  "$INPUT" | jq -r '.tool_name // ""')
+
+has_parinfer || has_fallback || exit 0
+
+case "$EVENT/$TOOL" in
+  PreToolUse/Write)
+    FNL=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // ""')
+    is_fennel "$FNL" || exit 0
+    ORIG=$(mktemp)
+    FIXED=$(mktemp)
+    trap 'rm -f "$ORIG" "$FIXED"' EXIT
+    printf '%s' "$INPUT" | jq -rj '.tool_input.content // ""' > "$ORIG"
+    repair_content_to_file "$ORIG" "$FIXED"
+    if ! cmp -s "$ORIG" "$FIXED"; then
+      printf '%s' "$INPUT" | jq --rawfile content "$FIXED" \
+        '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: (.tool_input + {content: $content})}}'
+    fi
+    ;;
+
+  PostToolUse/Edit)
+    FNL=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // ""')
+    RESP=$(printf '%s' "$INPUT" | jq -r '.tool_response // ""')
+    if is_fennel "$FNL" && [[ -f "$FNL" && -n "$RESP" ]]; then
+      repair_file "$FNL"
+    fi
+    ;;
+esac
+
+exit 0

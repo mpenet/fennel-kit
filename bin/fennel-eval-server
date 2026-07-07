@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# fennel-eval-server — start a persistent Fennel eval server.
+#
+# Usage:
+#   fennel-eval-server           # start server in current project
+#   fennel-eval-server --stop    # stop running server
+#
+# Discovery file .fennel-repl is written to the current directory.
+# fennel-eval reads this file to locate the server.
+#
+# Optional env:
+#   FENNEL_REPL_INFO  — path to discovery file (default: .fennel-repl)
+
+set -euo pipefail
+
+INFO="${FENNEL_REPL_INFO:-.fennel-repl}"
+FENNEL="${FENNEL_CMD:-fennel}"
+
+# Find the server script: installed path, then relative to this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f /usr/local/lib/fennel-mcp/fennel-repl-server.fnl ]]; then
+  SERVER_FNL=/usr/local/lib/fennel-mcp/fennel-repl-server.fnl
+elif [[ -f "$SCRIPT_DIR/../fennel-repl-server.fnl" ]]; then
+  SERVER_FNL="$SCRIPT_DIR/../fennel-repl-server.fnl"
+else
+  echo "fennel-repl-server.fnl not found. Run: make install-eval" >&2
+  exit 1
+fi
+
+# -- stop --
+if [[ "${1:-}" == "--stop" ]]; then
+  if [[ ! -f "$INFO" ]]; then
+    echo "No server info at $INFO"
+    exit 0
+  fi
+  # shellcheck disable=SC1090
+  source "$INFO"
+  if [[ -n "${pid:-}" ]] && kill "$pid" 2>/dev/null; then
+    echo "Stopped server (PID $pid)"
+  else
+    echo "Server (PID ${pid:-?}) already stopped"
+  fi
+  rm -rf "${dir:-}" "$INFO"
+  exit 0
+fi
+
+# -- start --
+if [[ -f "$INFO" ]]; then
+  # shellcheck disable=SC1090
+  source "$INFO"
+  if kill -0 "${pid:-0}" 2>/dev/null; then
+    echo "Server already running (PID $pid, runtime: $dir)"
+    exit 0
+  fi
+  rm -rf "${dir:-}" "$INFO"
+fi
+
+RUNTIME_DIR=$(mktemp -d)
+IN_PIPE="$RUNTIME_DIR/in"
+OUT_PIPE="$RUNTIME_DIR/out"
+
+mkfifo "$IN_PIPE" "$OUT_PIPE"
+
+# Open both FIFOs with O_RDWR (<>) so open(2) doesn't block waiting
+# for the other end — the process holds both reader and writer itself.
+"$FENNEL" "$SERVER_FNL" <>"$IN_PIPE" 1<>"$OUT_PIPE" 2>/dev/null &
+SERVER_PID=$!
+disown "$SERVER_PID"
+
+cat > "$INFO" <<EOF
+dir=$RUNTIME_DIR
+pid=$SERVER_PID
+EOF
+
+echo "fennel-eval-server started (PID $SERVER_PID)"
+echo "Runtime: $RUNTIME_DIR"
+echo "Stop:    fennel-eval-server --stop"
