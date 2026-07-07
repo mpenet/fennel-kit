@@ -1,95 +1,124 @@
-#!/usr/bin/env bash
-# fennel-eval — evaluate Fennel code in a persistent server.
-#
-# Usage:
-#   fennel-eval CODE                  eval code, print result
-#   fennel-eval --discover            show running server info
-#   fennel-eval --stop                stop running server
-#
-# Start a server first with: fennel-eval-server
-#
-# Code is automatically repaired with parinfer-rust if available.
-#
-# Optional env:
-#   FENNEL_REPL_INFO      — path to discovery file (default: .fennel-repl)
-#   PARINFER_RUST_PATH    — path to parinfer-rust binary
+#!/usr/bin/env fennel
+;; fennel-eval — evaluate Fennel code in a persistent server.
+;;
+;; Usage:
+;;   fennel-eval CODE                  eval code, print result
+;;   fennel-eval --discover            show running server info
+;;   fennel-eval --stop                stop running server
+;;
+;; Start a server first with: fennel-eval-server
+;;
+;; Code is automatically repaired with parinfer-rust if available.
+;;
+;; Optional env:
+;;   FENNEL_REPL_INFO      — path to discovery file (default: .fennel-repl)
+;;   PARINFER_RUST_PATH    — path to parinfer-rust binary
 
-set -euo pipefail
+(local fennel (require :fennel))
 
-INFO="${FENNEL_REPL_INFO:-.fennel-repl}"
-PARINFER="${PARINFER_RUST_PATH:-parinfer-rust}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+(fn dirname [path]
+  (or (path:match "^(.*)/[^/]*$") "."))
 
-if [[ -f /usr/local/lib/fennel-kit/parinfer.fnl ]]; then
-  PARINFER_FNL=/usr/local/lib/fennel-kit/parinfer.fnl
-elif [[ -f "$SCRIPT_DIR/../lib/parinfer.fnl" ]]; then
-  PARINFER_FNL="$SCRIPT_DIR/../lib/parinfer.fnl"
-else
-  PARINFER_FNL=""
-fi
+(fn file-exists? [path]
+  (let [f (io.open path :r)]
+    (when f (f:close) true)))
 
-usage() {
-  echo "Usage: fennel-eval CODE"
-  echo "       fennel-eval --discover"
-  echo "       fennel-eval --stop"
-  exit "${1:-0}"
-}
+(local lib-dir
+  (accumulate [found nil _ dir (ipairs ["/usr/local/lib/fennel-kit"
+                                        (.. (dirname (. arg 0)) "/../lib")])
+               &until found]
+    (when (file-exists? (.. dir "/parinfer.fnl")) dir)))
 
-[[ $# -eq 0 ]] && usage 1
+(local parinfer-bin (or (os.getenv "PARINFER_RUST_PATH") "parinfer-rust"))
+(local info-path (or (os.getenv "FENNEL_REPL_INFO") ".fennel-repl"))
 
-case "$1" in
-  --discover)
-    if [[ -f "$INFO" ]]; then cat "$INFO"; else echo "No server running ($INFO not found)"; fi
-    exit 0
-    ;;
-  --stop)
-    exec fennel-eval-server --stop
-    ;;
-  -h|--help) usage ;;
-esac
+(fn which? [cmd]
+  (let [f (io.popen (.. "command -v '" cmd "' 2>/dev/null"))]
+    (when f
+      (let [r (f:read :*a)]
+        (f:close)
+        (and r (> (# r) 0))))))
 
-CODE="$*"
+(local has-parinfer? (which? parinfer-bin))
 
-# Repair delimiters before eval
-if command -v "$PARINFER" &>/dev/null; then
-  REPAIRED=$(printf '%s' "$CODE" | "$PARINFER" --mode indent --language fennel 2>/dev/null)
-  [[ -n "$REPAIRED" ]] && CODE="$REPAIRED"
-elif [[ -n "$PARINFER_FNL" ]] && command -v fennel &>/dev/null; then
-  REPAIRED=$(printf '%s' "$CODE" | \
-    FENNEL_KIT_PARINFER_FNL="$PARINFER_FNL" fennel -e \
-      '(local f (require :fennel))
-       (local p (f.dofile (os.getenv "FENNEL_KIT_PARINFER_FNL")))
-       (io.write (p.repair (io.read :*a)))' 2>/dev/null)
-  [[ -n "$REPAIRED" ]] && CODE="$REPAIRED"
-fi
+(fn usage [code]
+  (io.write "Usage: fennel-eval CODE\n       fennel-eval --discover\n       fennel-eval --stop\n")
+  (os.exit (or code 0)))
 
-if [[ ! -f "$INFO" ]]; then
-  echo "No Fennel server running. Start one with: fennel-eval-server" >&2
-  exit 1
-fi
+(when (= (# arg) 0) (usage 1))
 
-# shellcheck disable=SC1090
-source "$INFO"
+(match (. arg 1)
+  "--discover"
+  (do
+    (if (file-exists? info-path)
+      (with-open [f (assert (io.open info-path :r))]
+        (io.write (f:read :*a)))
+      (print (.. "No server running (" info-path " not found)")))
+    (os.exit 0))
 
-if ! kill -0 "${pid:-0}" 2>/dev/null; then
-  echo "Server (PID ${pid:-?}) is not running. Start with: fennel-eval-server" >&2
-  exit 1
-fi
+  "--stop"
+  (do
+    (os.execute "fennel-eval-server --stop")
+    (os.exit 0))
 
-IN_PIPE="$dir/in"
-OUT_PIPE="$dir/out"
+  (where v (or (= v "-h") (= v "--help")))
+  (usage 0))
 
-LEN=$(printf '%s' "$CODE" | wc -c | tr -d ' ')
-printf "%d\n%s" "$LEN" "$CODE" >> "$IN_PIPE"
+(local code (table.concat (fcollect [i 1 (# arg)] (. arg i)) " "))
 
-{
-  IFS= read -r -t 30 status || { echo "Error: server timed out" >&2; exit 1; }
-  IFS= read -r -t 30 result || { echo "Error: server timed out" >&2; exit 1; }
-} < "$OUT_PIPE"
+;; Repair delimiters
+(var repaired code)
+(var repair-fn nil)
 
-if [[ "$status" == "ok" ]]; then
-  echo "$result"
-else
-  echo "Error: $result" >&2
-  exit 1
-fi
+(if has-parinfer?
+  (let [fin (os.tmpname)
+        fout (os.tmpname)]
+    (with-open [f (io.open fin :w)] (f:write code))
+    (os.execute (string.format "'%s' --mode indent --language fennel 2>/dev/null < '%s' > '%s'"
+                               parinfer-bin fin fout))
+    (let [f (io.open fout :r)
+          result (when f (let [r (f:read :*a)] (f:close) r))]
+      (os.remove fin)
+      (os.remove fout)
+      (when (and result (> (# result) 0))
+        (set repaired result))))
+  (when lib-dir
+    (when (not repair-fn)
+      (set repair-fn (. (fennel.dofile (.. lib-dir "/parinfer.fnl")) :repair)))
+    (set repaired (repair-fn code))))
+
+;; Check server
+(when (not (file-exists? info-path))
+  (io.stderr:write "No Fennel server running. Start one with: fennel-eval-server\n")
+  (os.exit 1))
+
+(local info
+  (let [content (with-open [f (assert (io.open info-path :r))] (f:read :*a))]
+    {:dir (content:match "dir=([^\n]+)")
+     :pid (tonumber (content:match "pid=([^\n]+)"))}))
+
+(when (not (= true (os.execute (.. "kill -0 " (tostring info.pid) " 2>/dev/null"))))
+  (io.stderr:write (.. "Server (PID " (tostring info.pid) ") is not running. Start with: fennel-eval-server\n"))
+  (os.exit 1))
+
+(local in-pipe (.. info.dir "/in"))
+(local out-pipe (.. info.dir "/out"))
+
+;; Send: length\ncode  (# counts bytes in Lua strings)
+(let [f (assert (io.open in-pipe :a))]
+  (f:write (string.format "%d\n%s" (# repaired) repaired))
+  (f:close))
+
+;; Read response with 30s timeout via sh read -t (no pure-Lua timed read)
+(let [cmd (string.format
+           "{ IFS= read -r -t 30 s && IFS= read -r -t 30 r && printf '%%s\\n%%s\\n' \"$s\" \"$r\"; } < '%s'"
+           out-pipe)
+      f (io.popen cmd)
+      status (when f (f:read :*l))
+      result (when f (f:read :*l))]
+  (when f (f:close))
+  (if (not status)
+    (do (io.stderr:write "Error: server timed out\n") (os.exit 1))
+    (if (= status "ok")
+      (print result)
+      (do (io.stderr:write (.. "Error: " (tostring result) "\n")) (os.exit 1)))))

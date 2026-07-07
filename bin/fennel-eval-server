@@ -1,97 +1,119 @@
-#!/usr/bin/env bash
-# fennel-eval-server — start a persistent Fennel eval server.
-#
-# Usage:
-#   fennel-eval-server           # start server in current project
-#   fennel-eval-server --stop    # stop running server
-#
-# Discovery file .fennel-repl is written to the current directory.
-# fennel-eval reads this file to locate the server.
-#
-# Optional env:
-#   FENNEL_REPL_INFO  — path to discovery file (default: .fennel-repl)
+#!/usr/bin/env fennel
+;; fennel-eval-server — start a persistent Fennel eval server.
+;;
+;; Usage:
+;;   fennel-eval-server           start server in current project
+;;   fennel-eval-server --stop    stop running server
+;;
+;; Discovery file .fennel-repl is written to the current directory.
+;; fennel-eval reads this file to locate the server.
+;;
+;; Optional env:
+;;   FENNEL_REPL_INFO  — path to discovery file (default: .fennel-repl)
+;;   FENNEL_CMD        — Fennel binary to use (default: fennel)
 
-set -euo pipefail
+(local fennel-bin (or (os.getenv "FENNEL_CMD") "fennel"))
+(local info-path (or (os.getenv "FENNEL_REPL_INFO") ".fennel-repl"))
 
-INFO="${FENNEL_REPL_INFO:-.fennel-repl}"
-FENNEL="${FENNEL_CMD:-fennel}"
+(fn dirname [path]
+  (or (path:match "^(.*)/[^/]*$") "."))
 
-# Only remove directories that are direct children of the system temp dir,
-# as created by mktemp -d. Refuses to act on empty paths, non-directories,
-# or anything outside TMPDIR.
-safe_rmdir() {
-  local path="$1" tmpbase
-  tmpbase="${TMPDIR:-/tmp}"
-  tmpbase="${tmpbase%/}"
-  [[ -n "$path" && "$path" == "${tmpbase}/"* && -d "$path" ]] && rm -rf "$path"
-}
+(fn file-exists? [path]
+  (let [f (io.open path :r)]
+    (when f (f:close) true)))
 
-# Find the server script: installed path, then relative to this script
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f /usr/local/lib/fennel-kit/fennel-repl-server.fnl ]]; then
-  SERVER_FNL=/usr/local/lib/fennel-kit/fennel-repl-server.fnl
-elif [[ -f "$SCRIPT_DIR/../fennel-repl-server.fnl" ]]; then
-  SERVER_FNL="$SCRIPT_DIR/../fennel-repl-server.fnl"
-else
-  echo "fennel-repl-server.fnl not found. Run: make install-eval" >&2
-  exit 1
-fi
+(fn read-info []
+  (when (file-exists? info-path)
+    (let [content (with-open [f (assert (io.open info-path :r))] (f:read :*a))]
+      {:dir (content:match "dir=([^\n]+)")
+       :pid (tonumber (content:match "pid=([^\n]+)"))})))
 
-# -- stop --
-if [[ "${1:-}" == "--stop" ]]; then
-  if [[ ! -f "$INFO" ]]; then
-    echo "No server info at $INFO"
-    exit 0
-  fi
-  # shellcheck disable=SC1090
-  source "$INFO"
-  if [[ -n "${pid:-}" ]] && kill "$pid" 2>/dev/null; then
-    echo "Stopped server (PID $pid)"
-  else
-    echo "Server (PID ${pid:-?}) already stopped"
-  fi
-  safe_rmdir "${dir:-}"
-  rm -f "$INFO"
-  exit 0
-fi
+(fn process-alive? [pid]
+  (when pid
+    (= true (os.execute (.. "kill -0 " (tostring pid) " 2>/dev/null")))))
 
-# -- start --
-if [[ -f "$INFO" ]]; then
-  # shellcheck disable=SC1090
-  source "$INFO"
-  if kill -0 "${pid:-0}" 2>/dev/null; then
-    echo "Server already running (PID $pid, runtime: $dir)"
-    exit 0
-  fi
-  safe_rmdir "${dir:-}"
-  rm -f "$INFO"
-fi
+;; Only remove directories that look like mktemp output inside TMPDIR.
+(fn safe-rmdir [path]
+  (when path
+    (let [tmpdir (or (os.getenv "TMPDIR") "/tmp")
+          tmpbase (tmpdir:gsub "/$" "")
+          prefix (.. tmpbase "/")]
+      (when (and (= (path:sub 1 (# prefix)) prefix)
+                 (file-exists? path))
+        (os.execute (string.format "rm -rf '%s'" path))))))
 
-RUNTIME_DIR=$(mktemp -d)
-IN_PIPE="$RUNTIME_DIR/in"
-OUT_PIPE="$RUNTIME_DIR/out"
+;; Find the server script
+(local server-fnl
+  (accumulate [found nil _ p (ipairs ["/usr/local/lib/fennel-kit/fennel-repl-server.fnl"
+                                       (.. (dirname (. arg 0)) "/../fennel-repl-server.fnl")])
+               &until found]
+    (when (file-exists? p) p)))
 
-mkfifo "$IN_PIPE" "$OUT_PIPE"
+(when (not server-fnl)
+  (io.stderr:write "fennel-repl-server.fnl not found. Run: make install-eval\n")
+  (os.exit 1))
 
-# Open both FIFOs with O_RDWR (<>) so open(2) doesn't block waiting
-# for the other end — the process holds both reader and writer itself.
-"$FENNEL" "$SERVER_FNL" <>"$IN_PIPE" 1<>"$OUT_PIPE" 2>/dev/null &
-SERVER_PID=$!
-disown "$SERVER_PID"
+;; -- stop --
+(when (= (. arg 1) "--stop")
+  (let [info (read-info)]
+    (if (not info)
+      (do (print (.. "No server info at " info-path)) (os.exit 0))
+      (do
+        (if (process-alive? info.pid)
+          (do
+            (os.execute (.. "kill " (tostring info.pid) " 2>/dev/null"))
+            (print (.. "Stopped server (PID " (tostring info.pid) ")")))
+          (print (.. "Server (PID " (tostring (or info.pid "?")) ") already stopped")))
+        (safe-rmdir info.dir)
+        (os.remove info-path)
+        (os.exit 0)))))
 
-sleep 0.2
-if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-  echo "Error: fennel-eval-server failed to start (is fennel in PATH?)" >&2
-  safe_rmdir "$RUNTIME_DIR"
-  rm -f "$INFO"
-  exit 1
-fi
+;; -- start: clean up stale state --
+(let [info (read-info)]
+  (when info
+    (if (process-alive? info.pid)
+      (do
+        (print (.. "Server already running (PID " (tostring info.pid) ", runtime: " info.dir ")"))
+        (os.exit 0))
+      (do
+        (safe-rmdir info.dir)
+        (os.remove info-path)))))
 
-cat > "$INFO" <<EOF
-dir=$RUNTIME_DIR
-pid=$SERVER_PID
-EOF
+;; Create runtime dir and FIFOs via shell
+(local runtime-dir
+  (let [f (io.popen "mktemp -d")]
+    (let [p (f:read :*a)] (f:close) (p:gsub "%s+$" ""))))
 
-echo "fennel-eval-server started (PID $SERVER_PID)"
-echo "Runtime: $RUNTIME_DIR"
-echo "Stop:    fennel-eval-server --stop"
+(when (or (not runtime-dir) (= runtime-dir ""))
+  (io.stderr:write "Error: mktemp -d failed\n")
+  (os.exit 1))
+
+(local in-pipe (.. runtime-dir "/in"))
+(local out-pipe (.. runtime-dir "/out"))
+
+(os.execute (string.format "mkfifo '%s' '%s'" in-pipe out-pipe))
+
+;; Start server in background, capture PID.
+;; O_RDWR (<>) keeps both pipe ends open so open(2) never blocks.
+;; Shell is not a session leader under popen, so backgrounded child
+;; is orphaned to init on shell exit — no disown needed.
+(local server-pid
+  (let [f (io.popen (string.format
+            "'%s' '%s' <>'%s' 1<>'%s' 2>/dev/null & echo $!"
+            fennel-bin server-fnl in-pipe out-pipe))]
+    (let [s (f:read :*a)] (f:close) (tonumber (s:match "(%d+)")))))
+
+(os.execute "sleep 0.2")
+
+(when (not (process-alive? server-pid))
+  (io.stderr:write "Error: fennel-eval-server failed to start (is fennel in PATH?)\n")
+  (safe-rmdir runtime-dir)
+  (os.remove info-path)
+  (os.exit 1))
+
+(with-open [f (assert (io.open info-path :w))]
+  (f:write (string.format "dir=%s\npid=%d\n" runtime-dir server-pid)))
+
+(print (.. "fennel-eval-server started (PID " (tostring server-pid) ")"))
+(print (.. "Runtime: " runtime-dir))
+(print "Stop:    fennel-eval-server --stop")
