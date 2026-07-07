@@ -55,7 +55,11 @@ if command -v "$PARINFER" &>/dev/null; then
   REPAIRED=$(printf '%s' "$CODE" | "$PARINFER" --mode indent --language fennel 2>/dev/null)
   [[ -n "$REPAIRED" ]] && CODE="$REPAIRED"
 elif [[ -n "$PARINFER_FNL" ]] && command -v fennel &>/dev/null; then
-  REPAIRED=$(printf '%s' "$CODE" | fennel "$PARINFER_FNL" 2>/dev/null)
+  REPAIRED=$(printf '%s' "$CODE" | \
+    FENNEL_MCP_PARINFER_FNL="$PARINFER_FNL" fennel -e \
+      '(local f (require :fennel))
+       (local p (f.dofile (os.getenv "FENNEL_MCP_PARINFER_FNL")))
+       (io.write (p.repair (io.read :*a)))' 2>/dev/null)
   [[ -n "$REPAIRED" ]] && CODE="$REPAIRED"
 fi
 
@@ -79,8 +83,8 @@ LEN="${#CODE}"
 printf "%d\n%s" "$LEN" "$CODE" >> "$IN_PIPE"
 
 {
-  IFS= read -r status
-  IFS= read -r result
+  IFS= read -r -t 30 status || { echo "Error: server timed out" >&2; exit 1; }
+  IFS= read -r -t 30 result || { echo "Error: server timed out" >&2; exit 1; }
 } < "$OUT_PIPE"
 
 if [[ "$status" == "ok" ]]; then

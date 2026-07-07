@@ -7,9 +7,8 @@
 ;;; At EOF, append any remaining closers.
 ;;;
 ;;; Limitations vs parinfer-rust:
-;;;   - does not remove extraneous closing delimiters mid-code
 ;;;   - does not handle paren mode
-;;;   - sufficient for fixing LLM-generated missing-closer errors
+;;;   - multi-line string literals confuse the tokenizer (rare in Fennel)
 
 (local openers {"(" true "[" true "{" true})
 (local closer-of {"(" ")" "[" "]" "{" "}"})
@@ -78,25 +77,36 @@
               (let [top (table.remove stack)]
                 (set pending-closers (.. pending-closers top.closer))))))
 
-        ;; Flush pending closers onto the previous output line
+        ;; Flush pending closers onto the previous output line,
+        ;; inserting them before any trailing newline.
         (when (> (# pending-closers) 0)
           (when (> (# out) 0)
-            (tset out (# out) (.. (. out (# out)) pending-closers)))
+            (let [prev (. out (# out))
+                  (body nl) (prev:match "^(.-)(\n?)$")]
+              (tset out (# out) (.. body pending-closers nl))))
           (set pending-closers ""))
 
-        ;; Process tokens to update the stack
-        (let [tokens (tokenize-line line)]
+        ;; Process tokens: update stack, rebuild line removing misplaced closers.
+        ;; Every character is a token so concat reconstructs the original line
+        ;; minus any chars we skip.
+        (let [tokens (tokenize-line line)
+              parts []]
           (each [_ tok (ipairs tokens)]
-            (when (= tok.type :open)
-              (table.insert stack {:ch tok.ch
-                                   :col (- tok.col 1)  ;; 0-indexed
-                                   :closer (. closer-of tok.ch)}))
-            (when (= tok.type :close)
-              (when (and (> (# stack) 0)
+            (if (= tok.type :open)
+              (do
+                (table.insert stack {:ch tok.ch
+                                     :col (- tok.col 1)
+                                     :closer (. closer-of tok.ch)})
+                (table.insert parts tok.ch))
+              (if (= tok.type :close)
+                (if (and (> (# stack) 0)
                          (= (. stack (# stack) :closer) tok.ch))
-                (table.remove stack)))))
-
-        (table.insert out (.. line nl))))
+                  (do
+                    (table.remove stack)
+                    (table.insert parts tok.ch))
+                  nil)  ;; misplaced closer: drop it
+                (table.insert parts tok.ch))))
+          (table.insert out (.. (table.concat parts "") nl)))))
 
     ;; Append any remaining closers at EOF
     (when (> (# stack) 0)
@@ -106,5 +116,4 @@
 
     (table.concat out "")))
 
-;; Standalone: read stdin, repair, write stdout
-(io.write (repair (io.read :*a)))
+{:repair repair}

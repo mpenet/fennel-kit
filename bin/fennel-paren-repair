@@ -27,13 +27,15 @@ has_parinfer()  { command -v "$PARINFER" &>/dev/null; }
 has_fallback()  { [[ -n "$PARINFER_FNL" ]] && command -v fennel &>/dev/null; }
 
 do_repair() {
-  # stdin → stdout. Prefers parinfer-rust, falls back to Fennel impl.
   if has_parinfer; then
     "$PARINFER" --mode indent --language fennel 2>/dev/null
   elif has_fallback; then
-    fennel "$PARINFER_FNL"
+    FENNEL_MCP_PARINFER_FNL="$PARINFER_FNL" fennel -e \
+      '(local f (require :fennel))
+       (local p (f.dofile (os.getenv "FENNEL_MCP_PARINFER_FNL")))
+       (io.write (p.repair (io.read :*a)))'
   else
-    cat  # passthrough
+    cat
   fi
 }
 

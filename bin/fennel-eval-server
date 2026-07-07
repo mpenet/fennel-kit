@@ -67,6 +67,13 @@ mkfifo "$IN_PIPE" "$OUT_PIPE"
 SERVER_PID=$!
 disown "$SERVER_PID"
 
+sleep 0.2
+if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+  echo "Error: fennel-eval-server failed to start (is fennel in PATH?)" >&2
+  rm -rf "$RUNTIME_DIR" "$INFO"
+  exit 1
+fi
+
 cat > "$INFO" <<EOF
 dir=$RUNTIME_DIR
 pid=$SERVER_PID

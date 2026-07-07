@@ -16,7 +16,7 @@ Inspired by [clojure-mcp-light](https://github.com/bhauman/clojure-mcp-light).
 - `fennel` — required for `fennel-eval` / `fennel-eval-server`; also used as fallback repair engine when parinfer-rust is absent
 - `fnlfmt` (optional) — formatter, enabled via `FENNEL_MCP_FNLFMT=1`
 
-When parinfer-rust is not installed, repair falls back to a pure-Fennel indent-mode implementation bundled in `lib/parinfer.fnl`. The fallback handles the most common LLM mistake (missing closing delimiters) but does not remove extraneous closers mid-code.
+When parinfer-rust is not installed, repair falls back to a pure-Fennel indent-mode implementation bundled in `lib/parinfer.fnl`. It inserts missing closers and removes misplaced ones. The only known limitation: multi-line string literals (rare in Fennel) may confuse the tokenizer.
 
 ## Installation
 
@@ -124,7 +124,7 @@ fennel-eval-server --stop
 ### Notes
 
 - `local` bindings don't persist across eval calls (Lua chunk scoping). Use `global` for state that must persist between calls.
-- One server per project directory, discovered via `.fennel-repl` in the current directory.
+- One server per project directory, discovered via `.fennel-repl` in the current directory. Add `.fennel-repl` to your `.gitignore`.
 - Serial access only — one eval at a time, which matches LLM usage patterns.
 
 ### Environment

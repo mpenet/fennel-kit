@@ -4,7 +4,7 @@ EVAL        = /usr/local/bin/fennel-eval
 EVAL_SERVER = /usr/local/bin/fennel-eval-server
 LIB_DIR     = /usr/local/lib/fennel-mcp
 
-.PHONY: all install install-hook install-repair install-eval
+.PHONY: all install install-hook install-repair install-eval test
 
 all: install
 
@@ -21,6 +21,9 @@ install-repair: install-lib
 install-hook: install-lib
 	sudo cp bin/fennel-paren-repair-hook $(REPAIR_HOOK)
 	sudo chmod +x $(REPAIR_HOOK)
+
+test:
+	fennel test/parinfer_test.fnl
 
 install-eval: install-lib
 	sudo cp fennel-repl-server.fnl $(LIB_DIR)/fennel-repl-server.fnl

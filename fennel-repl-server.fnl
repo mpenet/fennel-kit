@@ -12,7 +12,7 @@
 
 (var msg (read-msg))
 (while msg
-  (let [results (table.pack (pcall fennel.eval msg {:env _G}))
+  (let [results (table.pack (pcall fennel.eval msg {:env _G :filename :eval}))
         ok (. results 1)]
     (if ok
       (let [vals (fcollect [i 2 results.n] (fennel.view (. results i)))]
