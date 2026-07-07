@@ -16,6 +16,16 @@ set -euo pipefail
 INFO="${FENNEL_REPL_INFO:-.fennel-repl}"
 FENNEL="${FENNEL_CMD:-fennel}"
 
+# Only remove directories that are direct children of the system temp dir,
+# as created by mktemp -d. Refuses to act on empty paths, non-directories,
+# or anything outside TMPDIR.
+safe_rmdir() {
+  local path="$1" tmpbase
+  tmpbase="${TMPDIR:-/tmp}"
+  tmpbase="${tmpbase%/}"
+  [[ -n "$path" && "$path" == "${tmpbase}/"* && -d "$path" ]] && rm -rf "$path"
+}
+
 # Find the server script: installed path, then relative to this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f /usr/local/lib/fennel-kit/fennel-repl-server.fnl ]]; then
@@ -40,7 +50,8 @@ if [[ "${1:-}" == "--stop" ]]; then
   else
     echo "Server (PID ${pid:-?}) already stopped"
   fi
-  rm -rf "${dir:-}" "$INFO"
+  safe_rmdir "${dir:-}"
+  rm -f "$INFO"
   exit 0
 fi
 
@@ -52,7 +63,8 @@ if [[ -f "$INFO" ]]; then
     echo "Server already running (PID $pid, runtime: $dir)"
     exit 0
   fi
-  rm -rf "${dir:-}" "$INFO"
+  safe_rmdir "${dir:-}"
+  rm -f "$INFO"
 fi
 
 RUNTIME_DIR=$(mktemp -d)
@@ -70,7 +82,8 @@ disown "$SERVER_PID"
 sleep 0.2
 if ! kill -0 "$SERVER_PID" 2>/dev/null; then
   echo "Error: fennel-eval-server failed to start (is fennel in PATH?)" >&2
-  rm -rf "$RUNTIME_DIR" "$INFO"
+  safe_rmdir "$RUNTIME_DIR"
+  rm -f "$INFO"
   exit 1
 fi
 

@@ -79,7 +79,7 @@ fi
 IN_PIPE="$dir/in"
 OUT_PIPE="$dir/out"
 
-LEN="${#CODE}"
+LEN=$(printf '%s' "$CODE" | wc -c | tr -d ' ')
 printf "%d\n%s" "$LEN" "$CODE" >> "$IN_PIPE"
 
 {
