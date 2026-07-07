@@ -7,7 +7,7 @@
 #
 # Optional env:
 #   PARINFER_RUST_PATH  — path to parinfer-rust binary (default: parinfer-rust from PATH)
-#   FENNEL_MCP_FNLFMT   — set to 1 to run fnlfmt --fix after repair
+#   FENNEL_KIT_FNLFMT   — set to 1 to run fnlfmt --fix after repair
 
 set -euo pipefail
 
@@ -15,8 +15,8 @@ PARINFER="${PARINFER_RUST_PATH:-parinfer-rust}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Locate the bundled Fennel fallback
-if [[ -f /usr/local/lib/fennel-mcp/parinfer.fnl ]]; then
-  PARINFER_FNL=/usr/local/lib/fennel-mcp/parinfer.fnl
+if [[ -f /usr/local/lib/fennel-kit/parinfer.fnl ]]; then
+  PARINFER_FNL=/usr/local/lib/fennel-kit/parinfer.fnl
 elif [[ -f "$SCRIPT_DIR/../lib/parinfer.fnl" ]]; then
   PARINFER_FNL="$SCRIPT_DIR/../lib/parinfer.fnl"
 else
@@ -30,9 +30,9 @@ do_repair() {
   if has_parinfer; then
     "$PARINFER" --mode indent --language fennel 2>/dev/null
   elif has_fallback; then
-    FENNEL_MCP_PARINFER_FNL="$PARINFER_FNL" fennel -e \
+    FENNEL_KIT_PARINFER_FNL="$PARINFER_FNL" fennel -e \
       '(local f (require :fennel))
-       (local p (f.dofile (os.getenv "FENNEL_MCP_PARINFER_FNL")))
+       (local p (f.dofile (os.getenv "FENNEL_KIT_PARINFER_FNL")))
        (io.write (p.repair (io.read :*a)))'
   else
     cat
@@ -62,7 +62,7 @@ repair_file() {
     cp "$tmp" "$path"
     echo "  $path: fixed"
   fi
-  if [[ "${FENNEL_MCP_FNLFMT:-0}" == 1 ]] && command -v fnlfmt &>/dev/null; then
+  if [[ "${FENNEL_KIT_FNLFMT:-0}" == 1 ]] && command -v fnlfmt &>/dev/null; then
     fnlfmt --fix "$path" 2>/dev/null || true
   fi
 }

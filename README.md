@@ -1,4 +1,4 @@
-# fennel-mcp
+# fennel-kit
 
 CLI tools for LLM coding assistants working with [Fennel](https://fennel-lang.org).
 
@@ -14,16 +14,16 @@ Inspired by [clojure-mcp-light](https://github.com/bhauman/clojure-mcp-light).
 
 - [parinfer-rust](https://github.com/eraserhd/parinfer-rust) — preferred delimiter repair engine (optional)
 - `fennel` — required for `fennel-eval` / `fennel-eval-server`; also used as fallback repair engine when parinfer-rust is absent
-- `fnlfmt` (optional) — formatter, enabled via `FENNEL_MCP_FNLFMT=1`
+- `fnlfmt` (optional) — formatter, enabled via `FENNEL_KIT_FNLFMT=1`
 
 When parinfer-rust is not installed, repair falls back to a pure-Fennel indent-mode implementation bundled in `lib/parinfer.fnl`. It inserts missing closers and removes misplaced ones. The only known limitation: multi-line string literals (rare in Fennel) may confuse the tokenizer.
 
 ## Installation
 
 ```sh
-git clone https://github.com/mpenet/fennel-mcp
-cd fennel-mcp
-make install         # all tools → /usr/local/bin, lib → /usr/local/lib/fennel-mcp
+git clone https://github.com/mpenet/fennel-kit
+cd fennel-kit
+make install         # all tools → /usr/local/bin, lib → /usr/local/lib/fennel-kit
 make install-hook    # hook only
 make install-repair  # repair CLI only
 make install-eval    # eval tools only
@@ -58,7 +58,7 @@ Add to `~/.claude/settings.json`:
 | Variable             | Default         | Description                                    |
 |----------------------|-----------------|------------------------------------------------|
 | `PARINFER_RUST_PATH` | `parinfer-rust` | Path to parinfer-rust binary                   |
-| `FENNEL_MCP_FNLFMT`  | `0`             | Set to `1` to run `fnlfmt --fix` after repair  |
+| `FENNEL_KIT_FNLFMT`  | `0`             | Set to `1` to run `fnlfmt --fix` after repair  |
 
 ---
 
@@ -87,7 +87,7 @@ EOF
 | Variable             | Default         | Description                                    |
 |----------------------|-----------------|------------------------------------------------|
 | `PARINFER_RUST_PATH` | `parinfer-rust` | Path to parinfer-rust binary                   |
-| `FENNEL_MCP_FNLFMT`  | `0`             | Set to `1` to run `fnlfmt --fix` after repair  |
+| `FENNEL_KIT_FNLFMT`  | `0`             | Set to `1` to run `fnlfmt --fix` after repair  |
 
 ---
 
@@ -161,8 +161,8 @@ The REPL session persists — state is maintained between evaluations.
 The Docker image bundles parinfer-rust and all scripts. Useful for extracting the parinfer-rust binary without a local Rust toolchain:
 
 ```sh
-docker build -t fennel-mcp .
-docker run --rm fennel-mcp cat /usr/local/bin/parinfer-rust > /usr/local/bin/parinfer-rust
+docker build -t fennel-kit .
+docker run --rm fennel-kit cat /usr/local/bin/parinfer-rust > /usr/local/bin/parinfer-rust
 chmod +x /usr/local/bin/parinfer-rust
 ```
 

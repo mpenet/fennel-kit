@@ -20,8 +20,8 @@ INFO="${FENNEL_REPL_INFO:-.fennel-repl}"
 PARINFER="${PARINFER_RUST_PATH:-parinfer-rust}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [[ -f /usr/local/lib/fennel-mcp/parinfer.fnl ]]; then
-  PARINFER_FNL=/usr/local/lib/fennel-mcp/parinfer.fnl
+if [[ -f /usr/local/lib/fennel-kit/parinfer.fnl ]]; then
+  PARINFER_FNL=/usr/local/lib/fennel-kit/parinfer.fnl
 elif [[ -f "$SCRIPT_DIR/../lib/parinfer.fnl" ]]; then
   PARINFER_FNL="$SCRIPT_DIR/../lib/parinfer.fnl"
 else
@@ -56,9 +56,9 @@ if command -v "$PARINFER" &>/dev/null; then
   [[ -n "$REPAIRED" ]] && CODE="$REPAIRED"
 elif [[ -n "$PARINFER_FNL" ]] && command -v fennel &>/dev/null; then
   REPAIRED=$(printf '%s' "$CODE" | \
-    FENNEL_MCP_PARINFER_FNL="$PARINFER_FNL" fennel -e \
+    FENNEL_KIT_PARINFER_FNL="$PARINFER_FNL" fennel -e \
       '(local f (require :fennel))
-       (local p (f.dofile (os.getenv "FENNEL_MCP_PARINFER_FNL")))
+       (local p (f.dofile (os.getenv "FENNEL_KIT_PARINFER_FNL")))
        (io.write (p.repair (io.read :*a)))' 2>/dev/null)
   [[ -n "$REPAIRED" ]] && CODE="$REPAIRED"
 fi

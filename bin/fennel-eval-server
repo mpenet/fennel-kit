@@ -18,8 +18,8 @@ FENNEL="${FENNEL_CMD:-fennel}"
 
 # Find the server script: installed path, then relative to this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f /usr/local/lib/fennel-mcp/fennel-repl-server.fnl ]]; then
-  SERVER_FNL=/usr/local/lib/fennel-mcp/fennel-repl-server.fnl
+if [[ -f /usr/local/lib/fennel-kit/fennel-repl-server.fnl ]]; then
+  SERVER_FNL=/usr/local/lib/fennel-kit/fennel-repl-server.fnl
 elif [[ -f "$SCRIPT_DIR/../fennel-repl-server.fnl" ]]; then
   SERVER_FNL="$SCRIPT_DIR/../fennel-repl-server.fnl"
 else

@@ -2,7 +2,7 @@ REPAIR      = /usr/local/bin/fennel-paren-repair
 REPAIR_HOOK = /usr/local/bin/fennel-paren-repair-hook
 EVAL        = /usr/local/bin/fennel-eval
 EVAL_SERVER = /usr/local/bin/fennel-eval-server
-LIB_DIR     = /usr/local/lib/fennel-mcp
+LIB_DIR     = /usr/local/lib/fennel-kit
 
 .PHONY: all install install-hook install-repair install-eval test
 
