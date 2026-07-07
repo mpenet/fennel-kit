@@ -13,6 +13,7 @@ install: install-repair install-hook install-eval
 install-lib:
 	sudo mkdir -p $(LIB_DIR)
 	sudo cp lib/parinfer.fnl $(LIB_DIR)/parinfer.fnl
+	sudo cp lib/json.lua $(LIB_DIR)/json.lua
 
 install-repair: install-lib
 	sudo cp bin/fennel-paren-repair $(REPAIR)

@@ -1,96 +1,92 @@
-#!/usr/bin/env bash
-# fennel-paren-repair — Fix delimiter errors in Fennel files.
-#
-# Usage:
-#   fennel-paren-repair [FILE ...]          # fix files in place
-#   echo "(foo bar" | fennel-paren-repair   # fix stdin, output to stdout
-#
-# Optional env:
-#   PARINFER_RUST_PATH  — path to parinfer-rust binary (default: parinfer-rust from PATH)
-#   FENNEL_KIT_FNLFMT   — set to 1 to run fnlfmt --fix after repair
+#!/usr/bin/env fennel
+;; fennel-paren-repair — Fix delimiter errors in Fennel files.
+;;
+;; Usage:
+;;   fennel-paren-repair [FILE ...]          ;; fix files in place
+;;   echo "(foo bar" | fennel-paren-repair   ;; fix stdin, output to stdout
+;;
+;; Optional env:
+;;   PARINFER_RUST_PATH  — path to parinfer-rust binary (default: parinfer-rust from PATH)
+;;   FENNEL_KIT_FNLFMT   — set to 1 to run fnlfmt --fix after repair
 
-set -euo pipefail
+(local fennel (require :fennel))
 
-PARINFER="${PARINFER_RUST_PATH:-parinfer-rust}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+(fn dirname [path]
+  (or (path:match "^(.*)/[^/]*$") "."))
 
-# Locate the bundled Fennel fallback
-if [[ -f /usr/local/lib/fennel-kit/parinfer.fnl ]]; then
-  PARINFER_FNL=/usr/local/lib/fennel-kit/parinfer.fnl
-elif [[ -f "$SCRIPT_DIR/../lib/parinfer.fnl" ]]; then
-  PARINFER_FNL="$SCRIPT_DIR/../lib/parinfer.fnl"
-else
-  PARINFER_FNL=""
-fi
+(fn file-exists? [path]
+  (let [f (io.open path :r)]
+    (when f (f:close) true)))
 
-has_parinfer()  { command -v "$PARINFER" &>/dev/null; }
-has_fallback()  { [[ -n "$PARINFER_FNL" ]] && command -v fennel &>/dev/null; }
+(local lib-dir
+  (accumulate [found nil _ dir (ipairs ["/usr/local/lib/fennel-kit"
+                                        (.. (dirname (. arg 0)) "/../lib")])
+               &until found]
+    (when (file-exists? (.. dir "/parinfer.fnl")) dir)))
 
-do_repair() {
-  if has_parinfer; then
-    "$PARINFER" --mode indent --language fennel 2>/dev/null
-  elif has_fallback; then
-    FENNEL_KIT_PARINFER_FNL="$PARINFER_FNL" fennel -e \
-      '(local f (require :fennel))
-       (local p (f.dofile (os.getenv "FENNEL_KIT_PARINFER_FNL")))
-       (io.write (p.repair (io.read :*a)))'
-  else
-    cat
-  fi
-}
+(local parinfer-bin (or (os.getenv "PARINFER_RUST_PATH") "parinfer-rust"))
+(local fnlfmt? (= (os.getenv "FENNEL_KIT_FNLFMT") "1"))
 
-repair_stdin() {
-  local tmp out
-  tmp=$(mktemp)
-  out=$(mktemp)
-  trap 'rm -f "$tmp" "$out"' RETURN
-  cat > "$tmp"
-  do_repair < "$tmp" > "$out"
-  [[ -s "$out" ]] || cp "$tmp" "$out"
-  cat "$out"
-}
+(fn which? [cmd]
+  (let [f (io.popen (.. "command -v '" cmd "' 2>/dev/null"))]
+    (when f
+      (let [r (f:read :*a)]
+        (f:close)
+        (and r (> (# r) 0))))))
 
-repair_file() {
-  local path="$1" tmp
-  tmp=$(mktemp)
-  trap 'rm -f "$tmp"' RETURN
-  do_repair < "$path" > "$tmp"
-  [[ -s "$tmp" ]] || cp "$path" "$tmp"
-  if cmp -s "$path" "$tmp"; then
-    echo "  $path: unchanged"
-  else
-    cp "$tmp" "$path"
-    echo "  $path: fixed"
-  fi
-  if [[ "${FENNEL_KIT_FNLFMT:-0}" == 1 ]] && command -v fnlfmt &>/dev/null; then
-    fnlfmt --fix "$path" 2>/dev/null || true
-  fi
-}
+(local has-parinfer? (which? parinfer-bin))
 
-if ! has_parinfer && ! has_fallback; then
-  echo "Error: parinfer-rust not found and Fennel fallback unavailable." >&2
-  echo "Install parinfer-rust or run: make install-eval" >&2
-  exit 1
-fi
+(when (not (or has-parinfer? lib-dir))
+  (io.stderr:write "Error: parinfer-rust not found and Fennel fallback unavailable.\n")
+  (io.stderr:write "Install parinfer-rust or run: make install-eval\n")
+  (os.exit 1))
 
-if [[ $# -eq 0 ]]; then
-  repair_stdin
-else
-  echo
-  echo "fennel-paren-repair Results"
-  echo "==========================="
-  echo
-  failed=0
-  for f in "$@"; do
-    if [[ ! -f "$f" ]]; then
-      echo "  $f: not found"
-      failed=1
-    elif [[ "$f" != *.fnl ]]; then
-      echo "  $f: skipped (not a .fnl file)"
-    else
-      repair_file "$f"
-    fi
-  done
-  echo
-  exit $failed
-fi
+(var repair-fn nil)
+
+(fn do-repair [content]
+  (if has-parinfer?
+    (let [fin (os.tmpname)
+          fout (os.tmpname)]
+      (with-open [f (io.open fin :w)]
+        (f:write content))
+      (os.execute (string.format "'%s' --mode indent --language fennel 2>/dev/null < '%s' > '%s'"
+                                 parinfer-bin fin fout))
+      (let [f (io.open fout :r)
+            result (when f (let [r (f:read :*a)] (f:close) r))]
+        (os.remove fin)
+        (os.remove fout)
+        (if (and result (> (# result) 0)) result content)))
+    (do
+      (when (not repair-fn)
+        (set repair-fn (. (fennel.dofile (.. lib-dir "/parinfer.fnl")) :repair)))
+      (repair-fn content))))
+
+(fn repair-file [path]
+  (let [original (with-open [f (assert (io.open path :r))]
+                   (f:read :*a))
+        repaired (do-repair original)]
+    (if (= original repaired)
+      (print (.. "  " path ": unchanged"))
+      (do
+        (with-open [f (assert (io.open path :w))]
+          (f:write repaired))
+        (print (.. "  " path ": fixed"))))
+    (when (and fnlfmt? (which? "fnlfmt"))
+      (os.execute (string.format "fnlfmt --fix '%s' 2>/dev/null" path)))))
+
+(if (= (# arg) 0)
+  (io.write (do-repair (io.read :*a)))
+  (do
+    (print "")
+    (print "fennel-paren-repair Results")
+    (print "===========================")
+    (print "")
+    (var failed? false)
+    (each [_ path (ipairs arg)]
+      (if (not (file-exists? path))
+        (do (print (.. "  " path ": not found")) (set failed? true))
+        (if (not (path:match "%.fnl$"))
+          (print (.. "  " path ": skipped (not a .fnl file)"))
+          (repair-file path))))
+    (print "")
+    (os.exit (if failed? 1 0))))

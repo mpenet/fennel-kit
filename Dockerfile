@@ -11,6 +11,7 @@ COPY --from=parinfer-builder /usr/local/cargo/bin/parinfer-rust /usr/local/bin/p
 
 RUN mkdir -p /usr/local/lib/fennel-kit
 COPY lib/parinfer.fnl /usr/local/lib/fennel-kit/parinfer.fnl
+COPY lib/json.lua /usr/local/lib/fennel-kit/json.lua
 COPY fennel-repl-server.fnl /usr/local/lib/fennel-kit/fennel-repl-server.fnl
 
 COPY bin/fennel-paren-repair /usr/local/bin/fennel-paren-repair
