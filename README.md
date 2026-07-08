@@ -11,7 +11,8 @@ Both use [parinfer-rust](https://github.com/eraserhd/parinfer-rust) when availab
 
 ## Requirements
 
-- `fennel` — all scripts are `#!/usr/bin/env fennel`
+- `fennel` — required at install time to compile scripts to Lua; not needed at runtime
+- `lua` — required at runtime (scripts are compiled to `#!/usr/bin/env lua` by `make install`)
 - [parinfer-rust](https://github.com/eraserhd/parinfer-rust) — optional but recommended
 - `fnlfmt` — optional formatter, enabled via `--fnlfmt` flag; bundled and built from source by `make install`
 
@@ -89,6 +90,10 @@ docker build -t fennel-kit .
 docker run --rm fennel-kit cat /usr/local/bin/parinfer-rust > /usr/local/bin/parinfer-rust
 chmod +x /usr/local/bin/parinfer-rust
 ```
+
+## Credits
+
+Heavily inspired by [clojure-mcp-light](https://github.com/bhauman/clojure-mcp-light) by Bruce Hauman, which pioneered the same hook-based paren repair approach for Clojure.
 
 ## License
 

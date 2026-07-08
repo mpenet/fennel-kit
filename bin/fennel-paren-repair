@@ -8,7 +8,7 @@
 ;; Optional env:
 ;;   PARINFER_RUST_PATH  — path to parinfer-rust binary (default: parinfer-rust from PATH)
 
-(local fennel (require :fennel))
+
 
 (fn dirname [path]
   (or (path:match "^(.*)/[^/]*$") "."))
@@ -22,7 +22,7 @@
                                         "/usr/local/lib/fennel-kit"
                                         (.. (dirname (. arg 0)) "/../lib")])
                &until found]
-    (when (file-exists? (.. dir "/parinfer.fnl")) dir)))
+    (when (file-exists? (.. dir "/parinfer.lua")) dir)))
 
 (local parinfer-bin (or (os.getenv "PARINFER_RUST_PATH") "parinfer-rust"))
 (var fnlfmt? false)
@@ -63,7 +63,7 @@
         (if (and result (> (# result) 0)) result content)))
     (do
       (when (not repair-fn)
-        (set repair-fn (. (fennel.dofile (.. lib-dir "/parinfer.fnl")) :repair)))
+        (set repair-fn (. ((loadfile (.. lib-dir "/parinfer.lua"))) :repair)))
       (repair-fn content))))
 
 (fn repair-file [path]

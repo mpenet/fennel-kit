@@ -15,10 +15,18 @@ COPY lib/json.lua /usr/local/lib/fennel-kit/json.lua
 COPY lib/fnlfmt.fnl /usr/local/lib/fennel-kit/fnlfmt.fnl
 COPY lib/fnlfmt-cli.fnl /usr/local/lib/fennel-kit/fnlfmt-cli.fnl
 
-RUN printf '#!/usr/bin/env lua\n' > /usr/local/bin/fnlfmt && \
+COPY bin/fennel-paren-repair /tmp/fennel-paren-repair
+COPY bin/fennel-paren-repair-hook /tmp/fennel-paren-repair-hook
+
+RUN fennel --compile /usr/local/lib/fennel-kit/parinfer.fnl \
+      > /usr/local/lib/fennel-kit/parinfer.lua && \
+    printf '#!/usr/bin/env lua\n' > /usr/local/bin/fennel-paren-repair && \
+    fennel --compile /tmp/fennel-paren-repair >> /usr/local/bin/fennel-paren-repair && \
+    printf '#!/usr/bin/env lua\n' > /usr/local/bin/fennel-paren-repair-hook && \
+    fennel --compile /tmp/fennel-paren-repair-hook >> /usr/local/bin/fennel-paren-repair-hook && \
+    printf '#!/usr/bin/env lua\n' > /usr/local/bin/fnlfmt && \
     cd /usr/local/lib/fennel-kit && \
     fennel --require-as-include --compile fnlfmt-cli.fnl >> /usr/local/bin/fnlfmt && \
-    chmod +x /usr/local/bin/fnlfmt
-
-COPY bin/fennel-paren-repair /usr/local/bin/fennel-paren-repair
-COPY bin/fennel-paren-repair-hook /usr/local/bin/fennel-paren-repair-hook
+    chmod +x /usr/local/bin/fennel-paren-repair \
+             /usr/local/bin/fennel-paren-repair-hook \
+             /usr/local/bin/fnlfmt
