@@ -1,0 +1,213 @@
+#!/usr/bin/env fennel
+;; fennel-eval-server — persistent Fennel eval server (fennel-proto-repl protocol).
+;; State (locals, requires, defs) persists across requests via fennel.repl + coroutine.
+;;
+;; Usage:
+;;   fennel-eval-server [--port PORT]   ;; default: random port
+;;
+;; Requires: luasocket  (luarocks install luasocket), Lua 5.4+
+;; Protocol: https://gitlab.com/andreyorst/fennel-proto-repl-protocol
+
+(local socket (require :socket))
+(local fennel (require :fennel))
+
+(fn dirname [path] (or (path:match "^(.*)/[^/]*$") "."))
+(fn file-exists? [path] (let [f (io.open path :r)] (when f (f:close) true)))
+
+(local lib-dir
+  (accumulate [found nil _ dir (ipairs [(.. (os.getenv "HOME") "/.local/lib/fennel-kit")
+                                        "/usr/local/lib/fennel-kit"
+                                        (.. (dirname (. arg 0)) "/../lib")])
+               &until found]
+    (when (file-exists? (.. dir "/json.lua")) dir)))
+
+(when (not lib-dir)
+  (io.stderr:write "Error: fennel-kit lib dir not found\n")
+  (os.exit 1))
+
+(local json
+  (let [(chunk err) (loadfile (.. lib-dir "/json.lua"))]
+    (when (not chunk)
+      (io.stderr:write (.. "Error loading json.lua: " (tostring err) "\n"))
+      (os.exit 1))
+    (chunk)))
+
+(var port 0)
+(each [i a (ipairs arg)]
+  (when (= a "--port")
+    (let [p (tonumber (. arg (+ i 1)))]
+      (when p (set port p)))))
+
+;; Build JSON from protocol message spec: list of [key {sym|string|list value}] pairs
+(fn format-msg [data]
+  (let [obj {}]
+    (each [_ pair (ipairs data)]
+      (when pair
+        (let [k (. pair 1) vspec (. pair 2)]
+          (if (not= nil vspec.sym)
+            (tset obj k vspec.sym)
+            (not= nil vspec.string)
+            (tset obj k vspec.string)
+            (not= nil vspec.list)
+            (tset obj k vspec.list)))))
+    (json.encode obj)))
+
+(fn send-msg [client data]
+  (client:send (.. (format-msg data) "\n")))
+
+;; REPL environment — shared across all clients, persists for server lifetime
+(local repl-env (collect [k v (pairs _G)] (values k v)))
+(tset repl-env :fennel fennel)
+(tset repl-env :_G repl-env)
+
+;; Capture print output via coroutine yield
+(tset repl-env :print
+  (fn [...]
+    (let [parts (icollect [_ v (ipairs [...])] (tostring v))]
+      (coroutine.yield {:type :print :data (.. (table.concat parts "\t") "\n")}))))
+
+;; Capture io.write output via coroutine yield
+(local repl-io (collect [k v (pairs io)] (values k v)))
+(tset repl-io :write
+  (fn [...]
+    (let [parts (icollect [_ v (ipairs [...])] (tostring v))]
+      (coroutine.yield {:type :print :data (table.concat parts "")}))
+    true))
+(tset repl-env :io repl-io)
+
+;; Lua 5.4+ silently ignores coroutine.yield inside xpcall error handlers,
+;; so runtime errors from onError can't be passed via yield. Use a side-channel.
+(var last-error nil)
+
+;; Single persistent fennel.repl coroutine — locals survive across requests
+(local repl-co
+  (coroutine.create
+    (fn []
+      (fennel.repl {:readChunk (fn [ps]
+                        (if (and ps (> ps.stack-size 0))
+                          (error "incomplete expression" 0)
+                          (coroutine.yield {:type :read})))
+                    :onValues  (fn [xs] (coroutine.yield {:type :values :data xs}))
+                    :onError   (fn [t m _] (set last-error {:etype t :msg m}))
+                    :env repl-env}))))
+
+;; Prime the coroutine: runs through fennel.repl init until first readChunk yield
+(coroutine.resume repl-co)
+
+;; Drain coroutine yields until it settles back at :read
+(fn pump [client id first-yld]
+  (var yld first-yld)
+  (var running true)
+  (while running
+    (match yld.type
+      :read (set running false)
+      :print (do
+               (send-msg client [[:id {:sym id}]
+                                 [:op {:string :print}]
+                                 [:descr {:string :stdout}]
+                                 [:data {:string yld.data}]])
+               (let [(ok next) (coroutine.resume repl-co)]
+                 (if ok
+                   (set yld next)
+                   (do (set last-error {:etype :internal :msg (tostring next)})
+                       (set running false)))))
+      :values (do
+                (send-msg client [[:id {:sym id}]
+                                  [:op {:string :eval}]
+                                  [:values {:list yld.data}]])
+                (let [(ok next) (coroutine.resume repl-co)]
+                  (if ok
+                    (set yld next)
+                    (do (set last-error {:etype :internal :msg (tostring next)})
+                        (set running false)))))
+      _ (let [(ok next) (coroutine.resume repl-co)]
+          (if ok
+            (set yld next)
+            (do (set last-error {:etype :internal :msg (tostring next)})
+                (set running false)))))))
+
+(fn strip-locus [msg]
+  (if (= :string (type msg))
+    (pick-values 1 (msg:gsub "^[^:]*:%d+:%s+" ""))
+    (tostring msg)))
+
+(fn run-eval [client id code]
+  (set last-error nil)
+  (send-msg client [[:id {:sym id}] [:op {:string :accept}]])
+  (let [(_ first-yld) (coroutine.resume repl-co (.. code "\n"))]
+    (pump client id first-yld))
+  (when last-error
+    (send-msg client [[:id {:sym id}]
+                      [:op {:string :error}]
+                      [:type {:string (or last-error.etype :runtime)}]
+                      [:data {:string (strip-locus last-error.msg)}]]))
+  (send-msg client [[:id {:sym id}] [:op {:string :done}]]))
+
+(fn run-complete [client id prefix]
+  (send-msg client [[:id {:sym id}] [:op {:string :accept}]])
+  (let [pat (.. "^" (prefix:gsub "([^%w])" "%%%1"))
+        seen {}
+        results []]
+    (each [k _ (pairs (or repl-env.___replLocals___ {}))]
+      (when (and (= :string (type k)) (k:match pat) (not (. seen k)))
+        (tset seen k true)
+        (table.insert results k)))
+    (each [k _ (pairs repl-env)]
+      (when (and (= :string (type k)) (k:match pat) (not (. seen k)))
+        (tset seen k true)
+        (table.insert results k)))
+    (send-msg client [[:id {:sym id}]
+                      [:op {:string :complete}]
+                      [:values {:list results}]]))
+  (send-msg client [[:id {:sym id}] [:op {:string :done}]]))
+
+(fn handle-client [client]
+  (send-msg client [[:id {:sym 0}]
+                    [:op {:string :init}]
+                    [:status {:string :done}]
+                    [:protocol {:string "0.6.4"}]
+                    [:fennel {:string (tostring fennel.version)}]
+                    [:lua {:string _VERSION}]])
+  (client:settimeout 60)
+  (var running true)
+  (while running
+    (let [(line err) (client:receive :*l)]
+      (if (not line)
+        (set running false)
+        (let [(ok msg) (pcall fennel.eval line {:env {}})]
+          (when (and ok msg (= :number (type msg.id)))
+            (let [id msg.id]
+              (if msg.eval
+                (run-eval client id msg.eval)
+                msg.complete
+                (run-complete client id (tostring msg.complete))
+                msg.nop
+                (send-msg client [[:id {:sym id}] [:op {:string :done}]])
+                (or msg.exit msg.downgrade)
+                (do
+                  (send-msg client [[:id {:sym id}] [:op {:string :done}]])
+                  (set running false))
+                (do
+                  (send-msg client [[:id {:sym id}]
+                                    [:op {:string :error}]
+                                    [:type {:string :protocol}]
+                                    [:data {:string "unsupported op"}]])
+                  (send-msg client [[:id {:sym id}] [:op {:string :done}]])))))))))
+  (client:close))
+
+(local server (assert (socket.bind "127.0.0.1" port) "failed to bind socket"))
+(local (_ actual-port) (server:getsockname))
+(server:settimeout nil)
+
+(local port-file (.. (or (os.getenv "PWD") ".") "/.fennel-repl"))
+(with-open [f (assert (io.open port-file :w))]
+  (f:write (tostring actual-port) "\n"))
+
+(io.stderr:write (.. "fennel-eval-server listening on 127.0.0.1:" actual-port "\n"))
+(io.stderr:write (.. "Port file: " port-file "\n"))
+
+(while true
+  (let [(client err) (server:accept)]
+    (if client
+      (handle-client client)
+      (io.stderr:write (.. "accept error: " (tostring err) "\n")))))

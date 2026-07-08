@@ -2,17 +2,19 @@
 
 LLMs writing Fennel code repeatedly break delimiter balance — a misplaced paren triggers a fix attempt that introduces another, and so on. fennel-kit breaks that loop by automatically repairing delimiters on every write.
 
-Two tools:
+Three tools:
 
 - **`fennel-paren-repair-hook`** — Claude Code hook: repairs `.fnl` files transparently on every Write/Edit
 - **`fennel-paren-repair`** — standalone CLI: repair files in place or pipe code through it
+- **`fennel-eval`** / **`fennel-eval-server`** — persistent Fennel REPL over TCP: evaluate code with state preserved across calls
 
-Both use [parinfer-rust](https://github.com/eraserhd/parinfer-rust) when available, falling back to a bundled pure-Fennel indent-mode implementation (`lib/parinfer.fnl`) with no extra dependencies.
+The repair tools use [parinfer-rust](https://github.com/eraserhd/parinfer-rust) when available, falling back to a bundled pure-Fennel indent-mode implementation (`lib/parinfer.fnl`) with no extra dependencies.
 
 ## Requirements
 
-- `fennel` — required at install time to compile scripts to Lua; not needed at runtime
-- `lua` — required at runtime (scripts are compiled to `#!/usr/bin/env lua` by `make install`)
+- `fennel` — required at install time (compiles scripts to Lua) and at runtime for `fennel-eval-server`
+- `lua` — required at runtime (scripts compiled to `#!/usr/bin/env lua` by `make install`)
+- `luasocket` — required for `fennel-eval` and `fennel-eval-server` (`luarocks install luasocket`)
 - [parinfer-rust](https://github.com/eraserhd/parinfer-rust#installing) — optional but recommended
 - `fnlfmt` — optional formatter, enabled via `--fnlfmt` flag; bundled and built from source by `make install`
 
@@ -21,9 +23,10 @@ Both use [parinfer-rust](https://github.com/eraserhd/parinfer-rust) when availab
 ```sh
 git clone https://github.com/mpenet/fennel-kit
 cd fennel-kit
-make install         # → ~/.local/bin, lib → ~/.local/lib/fennel-kit
+make install         # all tools → ~/.local/bin, lib → ~/.local/lib/fennel-kit
 make install-hook    # hook only
 make install-repair  # repair CLI only
+make install-eval    # fennel-eval + fennel-eval-server only
 ```
 
 ---
@@ -78,6 +81,63 @@ EOF
 | Variable             | Default         | Description                  |
 |----------------------|-----------------|------------------------------|
 | `PARINFER_RUST_PATH` | `parinfer-rust` | Path to parinfer-rust binary |
+
+---
+
+## `fennel-eval` / `fennel-eval-server`
+
+A persistent Fennel REPL server and CLI client. State (locals, requires, defs) persists across invocations via `fennel.repl`. Requires `luasocket` and Lua 5.4+.
+
+Implements the [fennel-proto-repl protocol](https://gitlab.com/andreyorst/fennel-proto-repl-protocol), so editors with proto-repl support (fennel-mode, Conjure) can connect directly to the server port. One client is served at a time.
+
+**Start the server** (once per project, in the background):
+
+```sh
+fennel-eval-server &
+# fennel-eval-server listening on 127.0.0.1:PORT
+# Port file: /your/project/.fennel-repl
+```
+
+**Evaluate code:**
+
+```sh
+fennel-eval "(+ 1 2 3)"
+# 6
+
+fennel-eval "(local x 42)"
+# nil
+
+# State persists — x is still defined:
+fennel-eval "x"
+# 42
+
+# stdin for multi-line:
+fennel-eval <<'EOF'
+(fn greet [name]
+  (.. "hello " name))
+(greet "world")
+EOF
+# #<function: ...>
+# "hello world"
+```
+
+**Discover running servers:**
+
+```sh
+fennel-eval --discover-ports
+```
+
+| Option | Description |
+|--------|-------------|
+| `--port PORT` | Connect to specific port (default: reads `.fennel-repl`) |
+| `--timeout MS` | Eval timeout in ms (default: 30000) |
+| `--discover-ports` | Find running servers in current directory tree |
+
+| Server option | Description |
+|---------------|-------------|
+| `--port PORT` | Listen on specific port (default: random) |
+
+stdout and return values are both captured and printed. Errors exit with code 1.
 
 ---
 

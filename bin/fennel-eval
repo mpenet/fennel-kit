@@ -1,0 +1,139 @@
+#!/usr/bin/env fennel
+;; fennel-eval — evaluate Fennel code in a running fennel-eval-server.
+;; State persists across invocations (vars, requires, etc).
+;;
+;; Usage:
+;;   fennel-eval [--port PORT] [--timeout MS] CODE
+;;   fennel-eval [--port PORT] [--timeout MS]       ;; reads code from stdin
+;;   fennel-eval --discover-ports                   ;; find running servers
+;;
+;; Requires: luasocket  (luarocks install luasocket)
+;; Protocol: https://gitlab.com/andreyorst/fennel-proto-repl-protocol
+
+(local socket (require :socket))
+
+(fn dirname [path] (or (path:match "^(.*)/[^/]*$") "."))
+(fn file-exists? [path] (let [f (io.open path :r)] (when f (f:close) true)))
+
+(local lib-dir
+  (accumulate [found nil _ dir (ipairs [(.. (os.getenv "HOME") "/.local/lib/fennel-kit")
+                                        "/usr/local/lib/fennel-kit"
+                                        (.. (dirname (. arg 0)) "/../lib")])
+               &until found]
+    (when (file-exists? (.. dir "/json.lua")) dir)))
+
+(when (not lib-dir)
+  (io.stderr:write "Error: fennel-kit lib dir not found\n")
+  (os.exit 1))
+
+(local json
+  (let [(chunk err) (loadfile (.. lib-dir "/json.lua"))]
+    (when (not chunk)
+      (io.stderr:write (.. "Error loading json.lua: " (tostring err) "\n"))
+      (os.exit 1))
+    (chunk)))
+
+(fn find-port-file [start]
+  (var dir start)
+  (var found nil)
+  (while (and (not found) dir (not= dir "/"))
+    (let [candidate (.. dir "/.fennel-repl")]
+      (if (file-exists? candidate)
+        (set found candidate)
+        (set dir (dirname dir)))))
+  found)
+
+(fn read-port-file [path]
+  (when path
+    (with-open [f (io.open path :r)]
+      (tonumber (f:read :*l)))))
+
+(fn discover-ports []
+  (let [cwd (or (os.getenv "PWD") ".")
+        port-file (find-port-file cwd)]
+    (if port-file
+      (let [port (read-port-file port-file)]
+        (print "Discovered fennel-eval-server:")
+        (print (.. "  " cwd " -> port " (tostring port)))
+        (print "")
+        (print (.. "Usage: fennel-eval --port " (tostring port) " \"(+ 1 2)\"")))
+      (print "No running fennel-eval-server found in current directory tree."))))
+
+;; Parse args
+(var port nil)
+(var timeout 30)
+(var code nil)
+(var discover? false)
+(var skip-next false)
+
+(each [i a (ipairs arg)]
+  (if skip-next
+    (set skip-next false)
+    (match a
+      "--port" (do (set port (tonumber (. arg (+ i 1)))) (set skip-next true))
+      "--timeout" (do (set timeout (/ (tonumber (or (. arg (+ i 1)) "30000")) 1000)) (set skip-next true))
+      "--discover-ports" (set discover? true)
+      _ (set code a))))
+
+(when discover?
+  (discover-ports)
+  (os.exit 0))
+
+(when (not port)
+  (let [cwd (or (os.getenv "PWD") ".")
+        port-file (find-port-file cwd)]
+    (set port (read-port-file port-file))))
+
+(when (not port)
+  (io.stderr:write "No running fennel-eval-server found.\nStart one with: fennel-eval-server\n")
+  (os.exit 1))
+
+(when (not code)
+  (set code (io.read :*a)))
+
+(when (or (not code) (= code ""))
+  (io.stderr:write "No code to evaluate.\n")
+  (os.exit 1))
+
+(local (client err) (socket.connect "127.0.0.1" port))
+(when (not client)
+  (io.stderr:write (.. "Failed to connect to fennel-eval-server on port " (tostring port) ": " (tostring err) "\n"))
+  (os.exit 1))
+
+(client:settimeout timeout)
+
+;; Embed code in a Fennel string literal that fits on one line (no embedded newlines)
+(fn escape-str [s]
+  (-> s
+      (: :gsub "\\" "\\\\")
+      (: :gsub "\"" "\\\"")
+      (: :gsub "\r" "\\r")
+      (: :gsub "\n" "\\n")))
+
+(client:send (.. "{:id 1 :eval \"" (escape-str code) "\"}\n"))
+
+;; Read multi-message response until done or error
+(var done? false)
+(var exit-code 0)
+
+(while (not done?)
+  (let [(line recv-err) (client:receive :*l)]
+    (if (not line)
+      (do
+        (io.stderr:write (.. "Connection error: " (tostring recv-err) "\n"))
+        (set exit-code 1)
+        (set done? true))
+      (let [(ok msg) (pcall json.decode line)]
+        (when (and ok msg)
+          (match msg.op
+            :print (io.write (or msg.data ""))
+            :eval (each [_ v (ipairs (or msg.values []))]
+                    (print v))
+            :error (do
+                     (io.stderr:write (.. (or msg.data "error") "\n"))
+                     (set exit-code 1)
+                     (set done? true))
+            :done (set done? true)))))))
+
+(client:close)
+(os.exit exit-code)

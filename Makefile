@@ -1,13 +1,15 @@
 REPAIR      = $(HOME)/.local/bin/fennel-paren-repair
 REPAIR_HOOK = $(HOME)/.local/bin/fennel-paren-repair-hook
 FNLFMT      = $(HOME)/.local/bin/fnlfmt
+EVAL        = $(HOME)/.local/bin/fennel-eval
+EVAL_SERVER = $(HOME)/.local/bin/fennel-eval-server
 LIB_DIR     = $(HOME)/.local/lib/fennel-kit
 
-.PHONY: all install install-hook install-repair install-fnlfmt dev test
+.PHONY: all install install-hook install-repair install-fnlfmt install-eval dev test
 
 all: install
 
-install: install-repair install-hook install-fnlfmt
+install: install-repair install-hook install-fnlfmt install-eval
 
 install-lib:
 	mkdir -p $(LIB_DIR)
@@ -33,6 +35,14 @@ install-fnlfmt: install-lib
 	printf '#!/usr/bin/env lua\n' > $(FNLFMT)
 	cd $(LIB_DIR) && fennel --require-as-include --compile fnlfmt-cli.fnl >> $(FNLFMT)
 	chmod +x $(FNLFMT)
+
+install-eval: install-lib
+	mkdir -p $(HOME)/.local/bin
+	printf '#!/usr/bin/env lua\n' > $(EVAL)
+	fennel --compile bin/fennel-eval >> $(EVAL)
+	chmod +x $(EVAL)
+	cp bin/fennel-eval-server $(EVAL_SERVER)
+	chmod +x $(EVAL_SERVER)
 
 dev:
 	fennel --compile lib/parinfer.fnl > lib/parinfer.lua
