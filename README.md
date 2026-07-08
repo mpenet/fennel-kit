@@ -90,7 +90,15 @@ A persistent Fennel REPL server and CLI client. State (locals, requires, defs) p
 
 Implements the [fennel-proto-repl protocol](https://gitlab.com/andreyorst/fennel-proto-repl-protocol), so editors with proto-repl support (fennel-mode, Conjure) can connect directly to the server port. One client is served at a time.
 
-**Start the server** (once per project, in the background):
+### Installation
+
+```sh
+make install-eval   # installs fennel-eval and fennel-eval-server to ~/.local/bin
+```
+
+### Starting the server
+
+Start once per project, in the background, from the project root:
 
 ```sh
 fennel-eval-server &
@@ -98,7 +106,9 @@ fennel-eval-server &
 # Port file: /your/project/.fennel-repl
 ```
 
-**Evaluate code:**
+The port is written to `.fennel-repl` in the current directory. `fennel-eval` walks up the directory tree to find it automatically, so you can call it from any subdirectory of the project.
+
+### Evaluating code
 
 ```sh
 fennel-eval "(+ 1 2 3)"
@@ -121,23 +131,63 @@ EOF
 # "hello world"
 ```
 
+`stdout` output and return values are both captured and printed. Errors exit with code 1.
+
+### Options
+
+| `fennel-eval` option | Description |
+|----------------------|-------------|
+| `--port PORT` | Connect to specific port (default: reads `.fennel-repl`) |
+| `--timeout MS` | Eval timeout in ms (default: 30000) |
+| `--discover-ports` | Find running servers in current directory tree |
+
+| `fennel-eval-server` option | Description |
+|-----------------------------|-------------|
+| `--port PORT` | Listen on specific port (default: random) |
+
+### Using with Claude Code
+
+Add the following to your project's `CLAUDE.md` (or `~/.claude/CLAUDE.md` globally):
+
+````markdown
+## Fennel REPL Evaluation
+
+`fennel-eval` is available for evaluating Fennel code via a running `fennel-eval-server`.
+State (locals, requires, defs) persists across calls.
+
+**Evaluate code:**
+
+```sh
+fennel-eval "(+ 1 2)"
+fennel-eval --timeout 10000 "(some-slow-operation)"
+```
+
+**Multi-line via stdin:**
+
+```sh
+fennel-eval <<'EOF'
+(local result (some-fn arg1 arg2))
+result
+EOF
+```
+
 **Discover running servers:**
 
 ```sh
 fennel-eval --discover-ports
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--port PORT` | Connect to specific port (default: reads `.fennel-repl`) |
-| `--timeout MS` | Eval timeout in ms (default: 30000) |
-| `--discover-ports` | Find running servers in current directory tree |
+Always use `fennel-eval` to test code after writing or editing Fennel files.
+Use `:reload` when requiring modules to pick up changes.
+````
 
-| Server option | Description |
-|---------------|-------------|
-| `--port PORT` | Listen on specific port (default: random) |
+Then start the server at the beginning of each Fennel session:
 
-stdout and return values are both captured and printed. Errors exit with code 1.
+```sh
+fennel-eval-server &
+```
+
+Claude will use `fennel-eval` via Bash to verify code as it writes it — catching errors before they accumulate.
 
 ---
 
