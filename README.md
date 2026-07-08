@@ -1,48 +1,38 @@
 # fennel-kit
 
-CLI tools for LLM coding assistants working with [Fennel](https://fennel-lang.org).
+LLMs writing Fennel code repeatedly break delimiter balance — a misplaced paren triggers a fix attempt that introduces another, and so on. fennel-kit breaks that loop by automatically repairing delimiters on every write.
 
-Solves the **"Paren Edit Death Loop"** — where an LLM repeatedly fails to fix mismatched delimiters in Fennel code. Three tools:
+Two tools:
 
-- [`fennel-paren-repair-hook`](#fennel-paren-repair-hook) — Auto-fix delimiters via Claude Code hooks
-- [`fennel-paren-repair`](#fennel-paren-repair) — On-demand delimiter fix (any LLM with shell access)
-- [`fennel-eval`](#fennel-eval) — Evaluate Fennel code in a persistent REPL process
+- **`fennel-paren-repair-hook`** — Claude Code hook: repairs `.fnl` files transparently on every Write/Edit
+- **`fennel-paren-repair`** — standalone CLI: repair files in place or pipe code through it
 
-Inspired by [clojure-mcp-light](https://github.com/bhauman/clojure-mcp-light).
+Both use [parinfer-rust](https://github.com/eraserhd/parinfer-rust) when available, falling back to a bundled pure-Fennel indent-mode implementation (`lib/parinfer.fnl`) with no extra dependencies.
 
 ## Requirements
 
-- `fennel` — required for all tools (all scripts are written in Fennel)
-- [parinfer-rust](https://github.com/eraserhd/parinfer-rust) — preferred delimiter repair engine (optional)
-- `fnlfmt` (optional) — formatter, enabled via `FENNEL_KIT_FNLFMT=1`
-
-No bash or jq dependency. All scripts are `#!/usr/bin/env fennel`.
-
-When parinfer-rust is not installed, repair falls back to a pure-Fennel indent-mode implementation bundled in `lib/parinfer.fnl`. It inserts missing closers and removes misplaced ones. The only known limitation: multi-line string literals (rare in Fennel) may confuse the tokenizer.
+- `fennel` — all scripts are `#!/usr/bin/env fennel`
+- [parinfer-rust](https://github.com/eraserhd/parinfer-rust) — optional but recommended
+- `fnlfmt` — optional formatter, enabled via `FENNEL_KIT_FNLFMT=1`
 
 ## Installation
 
 ```sh
 git clone https://github.com/mpenet/fennel-kit
 cd fennel-kit
-make install         # all tools → /usr/local/bin, lib → /usr/local/lib/fennel-kit
+make install         # → /usr/local/bin, lib → /usr/local/lib/fennel-kit
 make install-hook    # hook only
 make install-repair  # repair CLI only
-make install-eval    # eval tools only
 ```
 
 ---
 
 ## `fennel-paren-repair-hook`
 
-Claude Code hook that automatically repairs Fennel delimiter errors on every Write/Edit operation.
+Hooks into Claude Code's Write and Edit tool calls to repair Fennel delimiters before/after every file operation. No manual intervention needed.
 
-### How it works
-
-- **PreToolUse/Write**: intercepts the file content before it's written, repairs delimiters, passes corrected content back to Claude
-- **PostToolUse/Edit**: repairs the file on disk after an Edit
-
-### Configuration
+- **PreToolUse/Write** — intercepts content before it hits disk, returns corrected content to Claude
+- **PostToolUse/Edit** — repairs the file on disk after each edit
 
 Add to `~/.claude/settings.json`:
 
@@ -55,112 +45,41 @@ Add to `~/.claude/settings.json`:
 }
 ```
 
-### Environment
-
-| Variable             | Default         | Description                                    |
-|----------------------|-----------------|------------------------------------------------|
-| `PARINFER_RUST_PATH` | `parinfer-rust` | Path to parinfer-rust binary                   |
-| `FENNEL_KIT_FNLFMT`  | `0`             | Set to `1` to run `fnlfmt --fix` after repair  |
+| Variable             | Default         | Description                                   |
+|----------------------|-----------------|-----------------------------------------------|
+| `PARINFER_RUST_PATH` | `parinfer-rust` | Path to parinfer-rust binary                  |
+| `FENNEL_KIT_FNLFMT`  | `0`             | Set to `1` to run `fnlfmt --fix` after repair |
 
 ---
 
 ## `fennel-paren-repair`
 
-Standalone CLI for on-demand repair. Useful with Gemini CLI, Codex, or any LLM with shell access.
-
-### Usage
+Repair files in place or use as a filter. Works with any LLM that has shell access.
 
 ```sh
 # Fix files in place
 fennel-paren-repair foo.fnl bar.fnl
 
-# Fix stdin, output to stdout
+# Fix stdin → stdout
 echo "(fn add [x y] (+ x y)" | fennel-paren-repair
 
-# Heredoc
+# Pipe a heredoc
 fennel-paren-repair <<'EOF'
 (fn broken [x
   (+ x 1))
 EOF
 ```
 
-### Environment
-
-| Variable             | Default         | Description                                    |
-|----------------------|-----------------|------------------------------------------------|
-| `PARINFER_RUST_PATH` | `parinfer-rust` | Path to parinfer-rust binary                   |
-| `FENNEL_KIT_FNLFMT`  | `0`             | Set to `1` to run `fnlfmt --fix` after repair  |
-
----
-
-## `fennel-eval`
-
-Persistent-state Fennel REPL for LLM use. Code is repaired before eval (parinfer-rust preferred, Fennel fallback otherwise).
-
-### Usage
-
-```sh
-# Start server in current project directory
-fennel-eval-server
-
-# Evaluate code
-fennel-eval "(+ 1 2)"
-# => 3
-
-# Global bindings persist across calls
-fennel-eval "(global x 42)"
-fennel-eval "x"
-# => 42
-
-# Require modules (resolved via project's package.path)
-fennel-eval "(local m (require :mymodule)) (m.my-fn 1 2)"
-
-# Show running server info
-fennel-eval --discover
-
-# Stop server
-fennel-eval-server --stop
-# or: fennel-eval --stop
-```
-
-### Notes
-
-- `local` bindings don't persist across eval calls (Lua chunk scoping). Use `global` for state that must persist between calls.
-- One server per project directory, discovered via `.fennel-repl` in the current directory. Add `.fennel-repl` to your `.gitignore`.
-- Serial access only — one eval at a time, which matches LLM usage patterns.
-
-### Environment
-
-| Variable             | Default         | Description                          |
-|----------------------|-----------------|--------------------------------------|
-| `FENNEL_REPL_INFO`   | `.fennel-repl`  | Path to server discovery file        |
-| `FENNEL_CMD`         | `fennel`        | Fennel binary to use                 |
-| `PARINFER_RUST_PATH` | `parinfer-rust` | Path to parinfer-rust binary         |
-
-### Telling the LLM about `fennel-eval`
-
-Add to `~/.claude/CLAUDE.md` or the project's `CLAUDE.md`:
-
-```markdown
-## Fennel REPL
-
-The command `fennel-eval` is available for evaluating Fennel code.
-
-Start the server first: `fennel-eval-server`
-
-Evaluate code: `fennel-eval "(+ 1 2)"`
-
-Use `global` for bindings that should persist across eval calls:
-`fennel-eval "(global x 42)"`
-
-The REPL session persists — state is maintained between evaluations.
-```
+| Variable             | Default         | Description                                   |
+|----------------------|-----------------|-----------------------------------------------|
+| `PARINFER_RUST_PATH` | `parinfer-rust` | Path to parinfer-rust binary                  |
+| `FENNEL_KIT_FNLFMT`  | `0`             | Set to `1` to run `fnlfmt --fix` after repair |
 
 ---
 
 ## Docker
 
-The Docker image bundles parinfer-rust and all scripts. Useful for extracting the parinfer-rust binary without a local Rust toolchain:
+Useful for extracting a parinfer-rust binary without a local Rust toolchain:
 
 ```sh
 docker build -t fennel-kit .
