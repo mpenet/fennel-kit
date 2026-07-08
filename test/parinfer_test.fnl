@@ -94,6 +94,19 @@
 
 (check "multi-wrong-close" "(foo})" "(foo)")
 
+;; -- multiline strings --
+(check "multiline-string-passthrough"
+  "(fn foo []\n  \"line one\nline two\"\n  bar"
+  "(fn foo []\n  \"line one\nline two\"\n  bar)")
+
+(check "multiline-string-with-paren-inside"
+  "(fn foo []\n  \"hello (world\nstill string\"\n  bar"
+  "(fn foo []\n  \"hello (world\nstill string\"\n  bar)")
+
+(check "multiline-string-missing-outer-closer"
+  "(fn foo []\n  \"line one\nline two\""
+  "(fn foo []\n  \"line one\nline two\")")
+
 ;; -- summary --
 (print (.. "\n" passed " passed, " failed " failed"))
 (when (> failed 0)

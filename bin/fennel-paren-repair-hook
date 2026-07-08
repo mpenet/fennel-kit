@@ -4,13 +4,14 @@
 ;;
 ;; Add to ~/.claude/settings.json:
 ;;   "hooks": {
-;;     "PreToolUse":  [{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "fennel-paren-repair-hook"}]}],
-;;     "PostToolUse": [{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "fennel-paren-repair-hook"}]}]
+;;     "PreToolUse":  [{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "fennel-paren-repair-hook --fnlfmt"}]}],
+;;     "PostToolUse": [{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "fennel-paren-repair-hook --fnlfmt"}]}]
 ;;   }
+;;
+;; Drop --fnlfmt if you don't want fnlfmt to run after repair.
 ;;
 ;; Optional env:
 ;;   PARINFER_RUST_PATH  — path to parinfer-rust binary (default: parinfer-rust from PATH)
-;;   FENNEL_KIT_FNLFMT  — set to 1 to run fnlfmt --fix after repair
 
 (local fennel (require :fennel))
 
@@ -22,7 +23,8 @@
     (when f (f:close) true)))
 
 (local lib-dir
-  (accumulate [found nil _ dir (ipairs ["/usr/local/lib/fennel-kit"
+  (accumulate [found nil _ dir (ipairs [(.. (os.getenv "HOME") "/.local/lib/fennel-kit")
+                                        "/usr/local/lib/fennel-kit"
                                         (.. (dirname (. arg 0)) "/../lib")])
                &until found]
     (when (file-exists? (.. dir "/parinfer.fnl")) dir)))
@@ -30,7 +32,9 @@
 (when (not lib-dir) (os.exit 0))
 
 (local parinfer-bin (or (os.getenv "PARINFER_RUST_PATH") "parinfer-rust"))
-(local fnlfmt? (= (os.getenv "FENNEL_KIT_FNLFMT") "1"))
+(local fnlfmt? (accumulate [found false _ a (ipairs arg) &until found]
+                 (= a "--fnlfmt")))
+
 
 (fn which? [cmd]
   (let [f (io.popen (.. "command -v '" cmd "' 2>/dev/null"))]
@@ -105,4 +109,5 @@
           (with-open [f (assert (io.open path :w))]
             (f:write repaired)))
         (when (and fnlfmt? (which? "fnlfmt"))
-          (os.execute (string.format "fnlfmt --fix '%s' 2>/dev/null" path)))))))
+          (os.execute (string.format "fnlfmt --fix '%s' 2>/dev/null" path)))
+        ))))

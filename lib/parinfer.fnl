@@ -8,17 +8,16 @@
 ;;;
 ;;; Limitations vs parinfer-rust:
 ;;;   - does not handle paren mode
-;;;   - multi-line string literals confuse the tokenizer (rare in Fennel)
 
 (local openers {"(" true "[" true "{" true})
 (local closer-of {"(" ")" "[" "]" "{" "}"})
 (local closers {")" true "]" true "}" true})
 
-(fn tokenize-line [line]
-  "Return a sequence of {:type :col :ch} tokens for one line."
+(fn tokenize-line [line initial-in-string]
+  "Return (tokens in-string) for one line; in-string carries across line boundaries."
   (let [tokens []]
     (var i 1)
-    (var in-string false)
+    (var in-string initial-in-string)
     (var escape false)
     (while (<= i (# line))
       (let [c (line:sub i i)]
@@ -48,7 +47,7 @@
                     (table.insert tokens {:type :close :col i :ch c})
                     (table.insert tokens {:type :char :col i :ch c}))))))))
       (set i (+ i 1)))
-    tokens))
+    (values tokens in-string)))
 
 (fn indent-of [line]
   "Number of leading spaces on a non-empty line."
@@ -64,13 +63,14 @@
         out []]
     (var stack [])  ;; [{:ch :col :closer}]
     (var pending-closers "")
+    (var in-string false)
 
     (each [_ raw (ipairs raw-lines)]
       (let [line (raw:gsub "\n$" "")
             nl (if (raw:match "\n$") "\n" "")]
 
         ;; On content lines: pop openers whose col >= indent and flush closers
-        (when (content? line)
+        (when (and (not in-string) (content? line))
           (let [ind (indent-of line)]
             (while (and (> (# stack) 0)
                         (>= (. stack (# stack) :col) ind))
@@ -89,7 +89,7 @@
         ;; Process tokens: update stack, rebuild line removing misplaced closers.
         ;; Every character is a token so concat reconstructs the original line
         ;; minus any chars we skip.
-        (let [tokens (tokenize-line line)
+        (let [(tokens next-in-string) (tokenize-line line in-string)
               parts []]
           (each [_ tok (ipairs tokens)]
             (if (= tok.type :open)
@@ -106,6 +106,7 @@
                     (table.insert parts tok.ch))
                   nil)  ;; misplaced closer: drop it
                 (table.insert parts tok.ch))))
+          (set in-string next-in-string)
           (table.insert out (.. (table.concat parts "") nl)))))
 
     ;; Append any remaining closers at EOF

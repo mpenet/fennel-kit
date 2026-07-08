@@ -13,14 +13,14 @@ Both use [parinfer-rust](https://github.com/eraserhd/parinfer-rust) when availab
 
 - `fennel` — all scripts are `#!/usr/bin/env fennel`
 - [parinfer-rust](https://github.com/eraserhd/parinfer-rust) — optional but recommended
-- `fnlfmt` — optional formatter, enabled via `FENNEL_KIT_FNLFMT=1`
+- `fnlfmt` — optional formatter, enabled via `--fnlfmt` flag; bundled and built from source by `make install`
 
 ## Installation
 
 ```sh
 git clone https://github.com/mpenet/fennel-kit
 cd fennel-kit
-make install         # → /usr/local/bin, lib → /usr/local/lib/fennel-kit
+make install         # → ~/.local/bin, lib → ~/.local/lib/fennel-kit
 make install-hook    # hook only
 make install-repair  # repair CLI only
 ```
@@ -39,16 +39,17 @@ Add to `~/.claude/settings.json`:
 ```json
 {
   "hooks": {
-    "PreToolUse":  [{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "fennel-paren-repair-hook"}]}],
-    "PostToolUse": [{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "fennel-paren-repair-hook"}]}]
+    "PreToolUse":  [{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "fennel-paren-repair-hook --fnlfmt"}]}],
+    "PostToolUse": [{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "fennel-paren-repair-hook --fnlfmt"}]}]
   }
 }
 ```
 
-| Variable             | Default         | Description                                   |
-|----------------------|-----------------|-----------------------------------------------|
-| `PARINFER_RUST_PATH` | `parinfer-rust` | Path to parinfer-rust binary                  |
-| `FENNEL_KIT_FNLFMT`  | `0`             | Set to `1` to run `fnlfmt --fix` after repair |
+Drop `--fnlfmt` if you don't have `fnlfmt` installed or don't want formatting after repair.
+
+| Variable             | Default         | Description                  |
+|----------------------|-----------------|------------------------------|
+| `PARINFER_RUST_PATH` | `parinfer-rust` | Path to parinfer-rust binary |
 
 ---
 
@@ -60,6 +61,9 @@ Repair files in place or use as a filter. Works with any LLM that has shell acce
 # Fix files in place
 fennel-paren-repair foo.fnl bar.fnl
 
+# Fix and run fnlfmt after
+fennel-paren-repair --fnlfmt foo.fnl bar.fnl
+
 # Fix stdin → stdout
 echo "(fn add [x y] (+ x y)" | fennel-paren-repair
 
@@ -70,10 +74,9 @@ fennel-paren-repair <<'EOF'
 EOF
 ```
 
-| Variable             | Default         | Description                                   |
-|----------------------|-----------------|-----------------------------------------------|
-| `PARINFER_RUST_PATH` | `parinfer-rust` | Path to parinfer-rust binary                  |
-| `FENNEL_KIT_FNLFMT`  | `0`             | Set to `1` to run `fnlfmt --fix` after repair |
+| Variable             | Default         | Description                  |
+|----------------------|-----------------|------------------------------|
+| `PARINFER_RUST_PATH` | `parinfer-rust` | Path to parinfer-rust binary |
 
 ---
 
