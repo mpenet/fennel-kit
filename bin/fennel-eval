@@ -36,11 +36,14 @@
 (fn find-port-file [start]
   (var dir start)
   (var found nil)
-  (while (and (not found) dir (not= dir "/"))
+  (while (and (not found) dir)
     (let [candidate (.. dir "/.fennel-repl")]
       (if (file-exists? candidate)
         (set found candidate)
-        (set dir (dirname dir)))))
+        (let [parent (dirname dir)]
+          (if (= parent dir)
+            (set dir nil)
+            (set dir parent))))))
   found)
 
 (fn read-port-file [path]
